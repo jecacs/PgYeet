@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <PackageId>PgYeet</PackageId>
+        <Version>0.1.0</Version>
+        <Authors>Yevhen</Authors>
+        <Description>Minimal, near zero-allocation bulk INSERT for EF Core on PostgreSQL via binary COPY. A tiny alternative to EFCore.BulkExtensions: ~10-13x faster than SaveChanges and orders of magnitude less memory.</Description>
+        <PackageTags>postgresql;postgres;npgsql;efcore;entity-framework-core;bulk;bulk-insert;copy;performance</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/jecacs/PgYeet</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/jecacs/PgYeet</PackageProjectUrl>
+
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11"/>
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.13"/>
+    </ItemGroup>
+
+</Project>

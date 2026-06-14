@@ -1,0 +1,58 @@
+name: release
+
+# Publishes the PgYeet package to nuget.org when a version tag is pushed, e.g.
+#   git tag v0.1.0 && git push origin v0.1.0
+# The package version is taken from the tag (v0.1.0 -> 0.1.0), so the .csproj
+# <Version> doesn't need to be bumped by hand. Manual runs are also allowed.
+on:
+  push:
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 0.1.0)'
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      # ubuntu-latest ships with Docker, so the Testcontainers integration tests
+      # run against a real PostgreSQL. Publishing is gated on them passing.
+      - name: Test
+        run: dotnet test --no-build -c Release --verbosity normal
+
+      - name: Pack
+        run: >
+          dotnet pack PgYeet/PgYeet.csproj -c Release
+          -p:Version=${{ steps.version.outputs.value }}
+          -p:ContinuousIntegrationBuild=true
+          -o artifacts
+
+      - name: Push to NuGet
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

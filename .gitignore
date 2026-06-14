@@ -1,0 +1,23 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+
+# BenchmarkDotNet
+BenchmarkDotNet.Artifacts/
+
+# IDEs
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rider / ReSharper
+_ReSharper*/
+*.DotSettings.user
