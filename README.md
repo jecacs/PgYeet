@@ -1,5 +1,10 @@
 # PgYeet
 
+[![NuGet](https://img.shields.io/nuget/v/PgYeet.svg?logo=nuget)](https://www.nuget.org/packages/PgYeet)
+[![Downloads](https://img.shields.io/nuget/dt/PgYeet.svg?logo=nuget)](https://www.nuget.org/packages/PgYeet)
+[![build](https://github.com/jecacs/PgYeet/actions/workflows/ci.yml/badge.svg)](https://github.com/jecacs/PgYeet/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A free, **MIT-licensed** bulk `INSERT` for **EF Core on PostgreSQL**, built on Npgsql binary `COPY`.
 A lightweight alternative to the (commercially licensed) EFCore.BulkExtensions for the most common
 operation: **~10–13× faster than `SaveChanges`**, near-zero allocations, no licensing strings attached.
@@ -72,8 +77,14 @@ need updates/deletes/upserts, other databases, or its broad type coverage.
 
 ## Install
 
+From [NuGet](https://www.nuget.org/packages/PgYeet):
+
 ```bash
 dotnet add package PgYeet
+```
+
+```xml
+<PackageReference Include="PgYeet" Version="0.1.0" />
 ```
 
 Requires EF Core 8 or 9 + Npgsql, on PostgreSQL. (Targets the EF Core 8 LTS line for the widest reach.)
