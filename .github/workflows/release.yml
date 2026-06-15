@@ -13,6 +13,10 @@ on:
         description: 'Package version (e.g. 0.1.0)'
         required: true
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -50,9 +54,18 @@ jobs:
           -p:ContinuousIntegrationBuild=true
           -o artifacts
 
+      # Trusted publishing: exchange the GitHub OIDC token for a short-lived NuGet
+      # API key. No long-lived secret stored in the repo. `user` is the NuGet
+      # account that owns the trusted-publishing policy (Package Owner).
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: jecacs
+
       - name: Push to NuGet
         run: >
           dotnet nuget push "artifacts/*.nupkg"
-          --api-key ${{ secrets.NUGET_API_KEY }}
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
