@@ -8,7 +8,7 @@
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
         <PackageId>PgYeet</PackageId>
-        <Version>0.1.0</Version>
+        <Version>0.2.0</Version>
         <Authors>Yevhen</Authors>
         <Description>Minimal, near zero-allocation bulk INSERT for EF Core on PostgreSQL via binary COPY. A tiny alternative to EFCore.BulkExtensions: ~10-13x faster than SaveChanges and orders of magnitude less memory.</Description>
         <PackageTags>postgresql;postgres;npgsql;efcore;entity-framework-core;bulk;bulk-insert;copy;performance</PackageTags>

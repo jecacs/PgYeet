@@ -10,23 +10,29 @@ namespace PgYeet;
 internal static class BulkInsert
 {
     public static async Task<int> ExecuteAsync<T>(
-        DbContext context, IReadOnlyList<T> rows,
+        DbContext context, IEnumerable<T> rows,
         bool returnGeneratedKeys,
         CancellationToken ct) where T : class
     {
-        if (rows.Count == 0)
+        if (rows.TryGetNonEnumeratedCount(out var knownCount) && knownCount == 0)
             return 0;
 
         var info = EfModel.For<T>(context);
-        var connection = (NpgsqlConnection)context.Database.GetDbConnection();
+        if (context.Database.GetDbConnection() is not NpgsqlConnection connection)
+            throw new NotSupportedException(
+                "PgYeet supports PostgreSQL via the Npgsql EF Core provider only (Npgsql.EntityFrameworkCore.PostgreSQL).");
         var logger = context.GetService<ILoggerFactory>().CreateLogger("PgYeet");
 
         await context.Database.OpenConnectionAsync(ct);
         try
         {
-            return info.Identity is null || !returnGeneratedKeys
-                ? (int) await DirectCopyAsync(connection, info, rows, logger, ct)
-                : await StagedInsertAsync(context, connection, info, rows, logger, ct);
+            if (info.Identity is null || !returnGeneratedKeys)
+                return checked((int)await DirectCopyAsync(connection, info, rows, logger, ct));
+
+            var list = rows as IReadOnlyList<T> ?? rows.ToArray();
+            return list.Count == 0
+                ? 0
+                : await StagedInsertAsync(context, connection, info, list, logger, ct);
         }
         finally
         {
@@ -34,10 +40,10 @@ internal static class BulkInsert
         }
     }
 
-    private static Task<ulong> DirectCopyAsync<T>(
+    private static async Task<ulong> DirectCopyAsync<T>(
         NpgsqlConnection connection,
         EfTableInfo<T> info,
-        IReadOnlyCollection<T> rows,
+        IEnumerable<T> rows,
         ILogger logger,
         CancellationToken ct)
     {
@@ -47,8 +53,10 @@ internal static class BulkInsert
             .Select(c => c.Write)
             .ToArray();
 
-        logger.LogDebug("PgYeet COPY {RowCount} rows: {Sql}", rows.Count, copy);
-        return BinaryCopy.WriteAsync(connection, copy, writers, rows, ct);
+        logger.LogDebug("PgYeet COPY: {Sql}", copy);
+        var copied = await BinaryCopy.WriteAsync(connection, copy, writers, rows, ct);
+        logger.LogDebug("PgYeet COPY done: {RowCount} rows", copied);
+        return copied;
     }
 
     private static async Task<int> StagedInsertAsync<T>(
@@ -65,7 +73,12 @@ internal static class BulkInsert
         var columnList = string.Join(", ", cols.Select(c => EfModel.QuoteIdent(c.Name)));
 
         var ambient = context.Database.CurrentTransaction;
-        var transaction = ambient?.GetDbTransaction() as NpgsqlTransaction ?? await connection.BeginTransactionAsync(ct);
+        var transaction = ambient is null
+            ? await connection.BeginTransactionAsync(ct)
+            : ambient.GetDbTransaction() as NpgsqlTransaction
+              ?? throw new NotSupportedException(
+                  "PgYeet: the current DbContext transaction is not an NpgsqlTransaction " +
+                  "(is the connection wrapped by a profiler or interceptor?).");
         try
         {
             var ddl = string.Join(", ", cols.Select(c => $"{EfModel.QuoteIdent(c.Name)} {c.StoreType}"));
@@ -94,15 +107,26 @@ internal static class BulkInsert
                 $"SELECT {columnList} FROM {EfModel.QuoteIdent(temp)} ORDER BY \"__ord\" " +
                 $"RETURNING {EfModel.QuoteIdent(identity.Column)};";
 
-            // Identity is monotonic with insertion order, so sorting the returned keys ascending
-            // lines them up with the entities (robust even if RETURNING comes back unordered).
+            // Identity values are assigned in insertion order (__ord), so sorting the returned keys
+            // ascending re-aligns them with the entities even if RETURNING comes back unordered.
+            // Assumes the identity sequence has a positive INCREMENT (the default).
             var ids = new long[rows.Count];
             await using (var cmd = new NpgsqlCommand(insert, connection, transaction))
             await using (var reader = await cmd.ExecuteReaderAsync(ct))
             {
-                var i = 0;
+                var read = 0;
                 while (await reader.ReadAsync(ct))
-                    ids[i++] = Convert.ToInt64(reader.GetValue(0));
+                {
+                    if (read == ids.Length)
+                        throw new InvalidOperationException(
+                            $"PgYeet: INSERT ... RETURNING produced more than the expected {ids.Length} keys " +
+                            "(a rule or trigger may be multiplying rows); generated keys cannot be correlated.");
+                    ids[read++] = Convert.ToInt64(reader.GetValue(0));
+                }
+                if (read != ids.Length)
+                    throw new InvalidOperationException(
+                        $"PgYeet: INSERT ... RETURNING produced {read} keys for {ids.Length} rows " +
+                        "(a BEFORE INSERT trigger may be filtering rows); generated keys cannot be correlated.");
             }
 
             Array.Sort(ids);
@@ -115,7 +139,7 @@ internal static class BulkInsert
         catch
         {
             if (ambient is null)
-                await transaction.RollbackAsync(ct);
+                await transaction.RollbackAsync(CancellationToken.None); // ct may already be cancelled
             throw;
         }
         finally

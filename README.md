@@ -128,9 +128,16 @@ Participates in an ambient `DbContext` transaction if one is open; otherwise it 
 
 ## Limitations (v0.1)
 
-- One entity type per call; a single-column store-generated (identity) PK for key write-back.
-- Scalar properties backed by a CLR property. Not yet handled: shadow properties, owned types /
-  table splitting, TPH inheritance (discriminator column).
+- One entity type per call. Key write-back requires a single-column **identity/serial** PK
+  (value-converter keys, e.g. strongly-typed IDs, are fine). Other store-generated keys —
+  uuid/sequence defaults, HiLo — are rejected with a clear error. Client-generated keys
+  (e.g. plain `Guid`) are copied as-is: set them before calling.
+- Scalar properties backed by a CLR property. Unsupported mappings — owned types, complex types,
+  table splitting, TPH/TPT inheritance, required shadow properties — **fail fast** with
+  `NotSupportedException` rather than silently writing incomplete rows.
+- Database defaults (`HasDefaultValueSql` on non-key columns) do **not** apply: PgYeet always
+  writes the property value from the entity, unlike `SaveChanges`, which omits unset (sentinel)
+  values. Server-computed columns are skipped.
 - Columns with an EF **value converter** use a (correct) boxed write path rather than the zero-alloc one.
 - PostgreSQL only — by design.
 

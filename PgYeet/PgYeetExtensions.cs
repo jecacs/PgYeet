@@ -10,23 +10,22 @@ public static class PgYeetExtensions
 {
     /// <summary>
     /// Bulk-inserts <paramref name="entities"/> into the table mapped by <typeparamref name="T"/> using
-    /// PostgreSQL binary COPY. If the entity has a single store-generated (identity) primary key, the
-    /// generated keys are written back onto the entities. Returns the number of rows inserted.
+    /// PostgreSQL binary COPY. If the entity has a single identity primary key, the generated keys are
+    /// written back onto the entities (this buffers the input). Returns the number of rows inserted.
     /// Pass <paramref name="returnGeneratedKeys"/>=false to skip the key write-back and do a single
-    /// direct COPY (faster; the entities' keys stay default).
+    /// direct COPY — faster, streams the input without buffering, and the entities' keys stay default.
     /// </summary>
     public static Task<int> YeetAsync<T>(
         this DbSet<T> dbSet,
         IEnumerable<T> entities,
-        CancellationToken ct = default,
-        bool returnGeneratedKeys = true)
+        bool returnGeneratedKeys = true,
+        CancellationToken ct = default)
         where T : class
     {
         ArgumentNullException.ThrowIfNull(dbSet);
         ArgumentNullException.ThrowIfNull(entities);
 
         var context = dbSet.GetService<ICurrentDbContext>().Context;
-        var rows = entities as IReadOnlyList<T> ?? entities.ToArray();
-        return BulkInsert.ExecuteAsync(context, rows, returnGeneratedKeys, ct);
+        return BulkInsert.ExecuteAsync(context, entities, returnGeneratedKeys, ct);
     }
 }

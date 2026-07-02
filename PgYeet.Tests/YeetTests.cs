@@ -103,6 +103,93 @@ public sealed class YeetTests : IClassFixture<PostgresFixture>, IAsyncLifetime
         Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
     }
 
+    [Fact]
+    public async Task Client_generated_guid_pk_copies_caller_values()
+    {
+        await using var db = NewContext();
+        var gadgets = Enumerable.Range(0, 20)
+            .Select(i => new Gadget { Id = Guid.NewGuid(), Label = "g" + i })
+            .ToArray();
+
+        var inserted = await db.Gadgets.YeetAsync(gadgets);
+
+        Assert.Equal(20, inserted);
+        var stored = await db.Gadgets.AsNoTracking().ToListAsync();
+        Assert.Equal(
+            gadgets.Select(g => g.Id).OrderBy(x => x),
+            stored.Select(g => g.Id).OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task Strongly_typed_identity_pk_writes_keys_back_through_converter()
+    {
+        await using var db = NewContext();
+        var orders = Enumerable.Range(0, 30).Select(i => new Order { Reference = "ref-" + i }).ToArray();
+
+        var inserted = await db.Orders.YeetAsync(orders);
+
+        Assert.Equal(30, inserted);
+        Assert.All(orders, o => Assert.True(o.Id.Value > 0));
+        Assert.Equal(30, orders.Select(o => o.Id).Distinct().Count());
+
+        // every written-back key addresses the row holding that entity's data
+        var byId = orders.ToDictionary(o => o.Id.Value, o => o.Reference);
+        var rows = await db.Orders.AsNoTracking().ToListAsync();
+        Assert.Equal(30, rows.Count);
+        Assert.All(rows, r => Assert.Equal(byId[r.Id.Value], r.Reference));
+    }
+
+    [Fact]
+    public async Task NoKeys_path_streams_a_lazy_enumerable()
+    {
+        await using var db = NewContext();
+
+        var inserted = await db.People.YeetAsync(LazyPeople(1_234), returnGeneratedKeys: false);
+
+        Assert.Equal(1_234, inserted);
+        Assert.Equal(1_234, await db.People.AsNoTracking().CountAsync());
+
+        static IEnumerable<Person> LazyPeople(int n)
+        {
+            for (var i = 0; i < n; i++)
+                yield return new Person
+                {
+                    Name = "s" + i, Email = $"s{i}@example.com", IsActive = true,
+                    CreatedAt = DateTime.UtcNow, Status = Status.Active,
+                };
+        }
+    }
+
+    [Fact]
+    public async Task Row_filtering_trigger_raises_clear_error_instead_of_wrong_keys()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE FUNCTION _pgyeet_skip() RETURNS trigger AS $$
+            BEGIN
+                IF NEW."Name" = 'skip-me' THEN RETURN NULL; END IF;
+                RETURN NEW;
+            END $$ LANGUAGE plpgsql;
+            CREATE TRIGGER _pgyeet_skip BEFORE INSERT ON people FOR EACH ROW EXECUTE FUNCTION _pgyeet_skip();
+            """);
+        try
+        {
+            var people = MakePeople(5);
+            people[2].Name = "skip-me";
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => db.People.YeetAsync(people));
+
+            Assert.Contains("RETURNING", ex.Message);
+            Assert.Equal(0, await db.People.AsNoTracking().CountAsync());   // own transaction rolled back
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DROP TRIGGER IF EXISTS _pgyeet_skip ON people; DROP FUNCTION IF EXISTS _pgyeet_skip();");
+        }
+    }
+
     private static Person[] MakePeople(int n) =>
         Enumerable.Range(0, n).Select(i => new Person
         {
