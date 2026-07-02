@@ -1,4 +1,4 @@
-# PgYeet
+![PgYeet — fast bulk insert for EF Core on PostgreSQL](https://raw.githubusercontent.com/jecacs/PgYeet/main/assets/logo.png)
 
 [![NuGet](https://img.shields.io/nuget/v/PgYeet.svg?logo=nuget)](https://www.nuget.org/packages/PgYeet)
 [![Downloads](https://img.shields.io/nuget/dt/PgYeet.svg?logo=nuget)](https://www.nuget.org/packages/PgYeet)

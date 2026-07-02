@@ -8,12 +8,14 @@
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
         <PackageId>PgYeet</PackageId>
-        <Version>0.2.0</Version>
+        <Version>0.2.1</Version>
         <Authors>Yevhen</Authors>
+        <Title>PgYeet — bulk insert for EF Core on PostgreSQL</Title>
         <Description>Minimal, near zero-allocation bulk INSERT for EF Core on PostgreSQL via binary COPY. A tiny alternative to EFCore.BulkExtensions: ~10-13x faster than SaveChanges and orders of magnitude less memory.</Description>
-        <PackageTags>postgresql;postgres;npgsql;efcore;entity-framework-core;bulk;bulk-insert;copy;performance</PackageTags>
+        <PackageTags>postgresql;postgres;pgsql;npgsql;efcore;ef-core;entity-framework-core;entityframeworkcore;dotnet;csharp;bulk;bulk-insert;bulkinsert;bulkcopy;sqlbulkcopy;batch-insert;bulk-import;insert;copy;binary-copy;savechanges;etl;performance;high-performance;orm</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/jecacs/PgYeet</RepositoryUrl>
         <PackageProjectUrl>https://github.com/jecacs/PgYeet</PackageProjectUrl>
@@ -24,6 +26,7 @@
 
     <ItemGroup>
         <None Include="..\README.md" Pack="true" PackagePath="\"/>
+        <None Include="..\assets\icon.png" Pack="true" PackagePath="\"/>
     </ItemGroup>
 
     <ItemGroup>
