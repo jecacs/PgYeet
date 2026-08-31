@@ -1,0 +1,57 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "29 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze-csharp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: csharp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Set up .NET 8, 9, and 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+          dotnet-quality: ga
+          global-json-file: global.json
+
+      - name: Restore
+        run: >-
+          dotnet restore PgYeet.sln
+          --locked-mode
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -warnaserror
+
+      - name: Build for CodeQL
+        run: dotnet build PgYeet.sln --no-restore --configuration Release -warnaserror
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:csharp

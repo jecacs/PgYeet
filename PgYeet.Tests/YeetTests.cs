@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Xunit;
 
 namespace PgYeet.Tests;
@@ -48,9 +49,12 @@ public sealed class YeetTests : IClassFixture<PostgresFixture>, IAsyncLifetime
         var createdAt = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         var person = new Person
         {
-            Name = "Ada", Email = "ada@example.com",
-            IsActive = true, CreatedAt = createdAt,
-            Score = null, Status = Status.Inactive,
+            Name = "Ada",
+            Email = "ada@example.com",
+            IsActive = true,
+            CreatedAt = createdAt,
+            Score = null,
+            Status = Status.Inactive,
         };
 
         await db.People.YeetAsync(new[] { person });
@@ -154,9 +158,107 @@ public sealed class YeetTests : IClassFixture<PostgresFixture>, IAsyncLifetime
             for (var i = 0; i < n; i++)
                 yield return new Person
                 {
-                    Name = "s" + i, Email = $"s{i}@example.com", IsActive = true,
-                    CreatedAt = DateTime.UtcNow, Status = Status.Active,
+                    Name = "s" + i,
+                    Email = $"s{i}@example.com",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    Status = Status.Active,
                 };
+        }
+    }
+
+    [Fact]
+    public async Task Fully_app_assigned_composite_key_is_copied()
+    {
+        await using var db = NewContext();
+        var items = new[]
+        {
+            new CompositeItem { TenantId = 7, Id = 1, Label = "first" },
+            new CompositeItem { TenantId = 7, Id = 2, Label = "second" },
+        };
+
+        var inserted = await db.CompositeItems.YeetAsync(items);
+
+        Assert.Equal(2, inserted);
+        Assert.Equal(2, await db.CompositeItems.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Client_generated_composite_guid_key_is_copied()
+    {
+        await using var db = NewContext();
+        var item = new CompositeGuidItem
+        {
+            TenantId = Guid.NewGuid(),
+            Id = Guid.NewGuid(),
+            Label = "client-generated",
+        };
+
+        var inserted = await db.CompositeGuidItems.YeetAsync(new[] { item });
+
+        Assert.Equal(1, inserted);
+        var stored = await db.CompositeGuidItems.AsNoTracking().SingleAsync();
+        Assert.Equal(item.TenantId, stored.TenantId);
+        Assert.Equal(item.Id, stored.Id);
+    }
+
+    [Fact]
+    public async Task Yeet_does_not_change_added_entity_state()
+    {
+        await using var db = NewContext();
+        var person = MakePeople(1)[0];
+        db.People.Add(person);
+
+        await db.People.YeetAsync(new[] { person });
+
+        Assert.Equal(EntityState.Added, db.Entry(person).State);
+        Assert.True(person.Id > 0);
+        Assert.Equal(1, await db.People.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Null_element_aborts_direct_copy_atomically()
+    {
+        await using var db = NewContext();
+        var people = new[] { MakePeople(1)[0], null! };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => db.People.YeetAsync(people, returnGeneratedKeys: false));
+
+        Assert.Equal("entities", ex.ParamName);
+        Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Direct_copy_returns_the_number_of_rows_accepted_by_a_trigger()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE FUNCTION _pgyeet_direct_skip() RETURNS trigger AS $$
+            BEGIN
+                IF NEW."Name" = 'skip-me' THEN RETURN NULL; END IF;
+                RETURN NEW;
+            END $$ LANGUAGE plpgsql;
+            CREATE TRIGGER _pgyeet_direct_skip BEFORE INSERT ON people
+            FOR EACH ROW EXECUTE FUNCTION _pgyeet_direct_skip();
+            """);
+
+        try
+        {
+            var people = MakePeople(5);
+            people[2].Name = "skip-me";
+
+            var inserted = await db.People.YeetAsync(people, returnGeneratedKeys: false);
+
+            Assert.Equal(4, inserted);
+            Assert.Equal(4, await db.People.AsNoTracking().CountAsync());
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DROP TRIGGER IF EXISTS _pgyeet_direct_skip ON people; " +
+                "DROP FUNCTION IF EXISTS _pgyeet_direct_skip();");
         }
     }
 
@@ -188,6 +290,110 @@ public sealed class YeetTests : IClassFixture<PostgresFixture>, IAsyncLifetime
             await db.Database.ExecuteSqlRawAsync(
                 "DROP TRIGGER IF EXISTS _pgyeet_skip ON people; DROP FUNCTION IF EXISTS _pgyeet_skip();");
         }
+    }
+
+    [Fact]
+    public async Task Duplicate_object_reference_is_rejected_before_inserting()
+    {
+        await using var db = NewContext();
+        var person = MakePeople(1)[0];
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => db.People.YeetAsync(new[] { person, person }));
+
+        Assert.Equal("entities", ex.ParamName);
+        Assert.Contains("same object reference", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, person.Id);
+        Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Failed_own_transaction_restores_original_key_values()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE people ADD CONSTRAINT uq_pgyeet_deferred_email " +
+            "UNIQUE (\"Email\") DEFERRABLE INITIALLY DEFERRED;");
+
+        try
+        {
+            var people = MakePeople(2);
+            people[0].Email = "duplicate@example.com";
+            people[1].Email = "duplicate@example.com";
+
+            await Assert.ThrowsAsync<PostgresException>(() => db.People.YeetAsync(people));
+
+            Assert.All(people, person => Assert.Equal(0, person.Id));
+            Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE people DROP CONSTRAINT IF EXISTS uq_pgyeet_deferred_email;");
+        }
+    }
+
+    [Fact]
+    public async Task Cyclic_database_sequence_is_rejected_before_inserting()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync("ALTER SEQUENCE \"people_Id_seq\" CYCLE;");
+
+        try
+        {
+            var person = MakePeople(1)[0];
+            var ex = await Assert.ThrowsAsync<NotSupportedException>(
+                () => db.People.YeetAsync(new[] { person }));
+
+            Assert.Contains("cyclic sequence", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, person.Id);
+            Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync("ALTER SEQUENCE \"people_Id_seq\" NO CYCLE;");
+        }
+    }
+
+    [Fact]
+    public async Task Descending_database_sequence_is_rejected_before_inserting()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync(
+            "ALTER SEQUENCE \"people_Id_seq\" INCREMENT BY -1 MINVALUE -2147483648 " +
+            "MAXVALUE 2147483647 RESTART WITH -1;");
+
+        try
+        {
+            var person = MakePeople(1)[0];
+            var ex = await Assert.ThrowsAsync<NotSupportedException>(
+                () => db.People.YeetAsync(new[] { person }));
+
+            Assert.Contains("positive increment", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, person.Id);
+            Assert.Equal(0, await db.People.AsNoTracking().CountAsync());
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "ALTER SEQUENCE \"people_Id_seq\" INCREMENT BY 1 NO MINVALUE NO MAXVALUE " +
+                "NO CYCLE RESTART WITH 1;");
+        }
+    }
+
+    [Fact]
+    public async Task Generated_key_conversion_overflow_rolls_back_without_mutating_objects()
+    {
+        await using var db = NewContext();
+        await db.Database.ExecuteSqlRawAsync(
+            "ALTER SEQUENCE \"big_orders_Id_seq\" RESTART WITH 2147483648;");
+
+        var order = new BigOrder { Reference = "overflow" };
+
+        await Assert.ThrowsAsync<OverflowException>(() => db.BigOrders.YeetAsync(new[] { order }));
+
+        Assert.Equal(0, order.Id.Value);
+        Assert.Equal(0, await db.BigOrders.AsNoTracking().CountAsync());
     }
 
     private static Person[] MakePeople(int n) =>

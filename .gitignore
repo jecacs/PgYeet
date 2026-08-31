@@ -1,6 +1,7 @@
 # Build output
 bin/
 obj/
+out/
 [Dd]ebug/
 [Rr]elease/
 artifacts/
@@ -11,8 +12,11 @@ BenchmarkDotNet.Artifacts/
 # IDEs
 .vs/
 .idea/
+.vscode/
 *.user
 *.suo
+*.userosscache
+*.sln.docstates
 
 # OS
 .DS_Store
@@ -21,3 +25,30 @@ Thumbs.db
 # Rider / ReSharper
 _ReSharper*/
 *.DotSettings.user
+
+# Test results and coverage
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+lcov.info
+
+# NuGet artifacts and local caches
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# Secrets and machine-local configuration
+appsettings.*.local.json
+secrets.json
+*.key
+*.pfx
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/

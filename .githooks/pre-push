@@ -1,0 +1,103 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${PGYEET_SKIP_PREPUSH:-0}" = "1" ]; then
+  echo "PgYeet pre-push checks skipped (PGYEET_SKIP_PREPUSH=1)."
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+pinned_sdk="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' global.json | head -1)"
+selected_sdk="$(dotnet --version)"
+if [ -z "${pinned_sdk}" ] || [ "${selected_sdk}" != "${pinned_sdk}" ]; then
+  echo "global.json pins SDK ${pinned_sdk:-<missing>}, but dotnet selected ${selected_sdk}."
+  exit 1
+fi
+
+dotnet restore PgYeet.sln --locked-mode -p:NuGetAudit=true -p:NuGetAuditMode=all -warnaserror
+dotnet build PgYeet.sln --no-restore --configuration Release -warnaserror
+dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
+
+if [ "${PGYEET_PREPUSH_SKIP_TESTS:-0}" != "1" ]; then
+  dotnet test PgYeet.Tests/PgYeet.Tests.csproj --no-build --configuration Release --verbosity normal
+fi
+
+package_dir="$(mktemp -d "${TMPDIR:-/tmp}/pgyeet-prepush.XXXXXX")"
+trap 'rm -rf -- "${package_dir}"' EXIT HUP INT TERM
+dotnet pack PgYeet/PgYeet.csproj \
+  --no-build \
+  --no-restore \
+  --configuration Release \
+  -p:ContinuousIntegrationBuild=true \
+  --output "${package_dir}"
+
+package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+package_path="${package_dir}/PgYeet.${package_version}.nupkg"
+symbol_path="${package_dir}/PgYeet.${package_version}.snupkg"
+test -f "${package_path}"
+test -f "${symbol_path}"
+
+set -- "${package_dir}"/*.nupkg
+if [ "$#" -ne 1 ] || [ "$1" != "${package_path}" ]; then
+  echo "Expected exactly ${package_path}."
+  exit 1
+fi
+set -- "${package_dir}"/*.snupkg
+if [ "$#" -ne 1 ] || [ "$1" != "${symbol_path}" ]; then
+  echo "Expected exactly ${symbol_path}."
+  exit 1
+fi
+
+nuspec="$(unzip -p "${package_path}" PgYeet.nuspec)"
+package_entries="$(unzip -Z1 "${package_path}")"
+symbol_entries="$(unzip -Z1 "${symbol_path}")"
+printf '%s\n' "${nuspec}" | grep -Fq '<id>PgYeet</id>'
+printf '%s\n' "${nuspec}" | grep -Fq "<version>${package_version}</version>"
+printf '%s\n' "${nuspec}" | grep -Fq '<license type="expression">MIT</license>'
+printf '%s\n' "${package_entries}" | grep -Fqx README.nuget.md
+printf '%s\n' "${package_entries}" | grep -Fqx icon.png
+
+for framework in net8.0 net10.0; do
+  printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.dll"
+  printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.xml"
+  printf '%s\n' "${symbol_entries}" | grep -Fqx "lib/${framework}/PgYeet.pdb"
+done
+if [ "$(printf '%s\n' "${package_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$')" -ne 4 ] ||
+   [ "$(printf '%s\n' "${symbol_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.pdb$')" -ne 2 ]; then
+  echo "Package contains an unexpected PgYeet target-framework asset."
+  exit 1
+fi
+
+if [ "${PGYEET_PREPUSH_SKIP_TESTS:-0}" != "1" ]; then
+  packed_packages="${package_dir}/packages"
+  PGYEET_LOCAL_FEED="${package_dir}" NUGET_PACKAGES="${packed_packages}" dotnet restore \
+    samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
+    -p:UsePackedPgYeet=true \
+    -p:PgYeetPackageVersion="${package_version}" \
+    --configfile samples/PgYeet.PackageSmoke/NuGet.packed.config \
+    -p:NuGetAudit=true \
+    -p:NuGetAuditMode=all \
+    -warnaserror
+
+  restored_path="${packed_packages}/pgyeet/${package_version}/pgyeet.${package_version}.nupkg"
+  if [ ! -f "${restored_path}" ] || ! cmp -s "${package_path}" "${restored_path}"; then
+    echo "The smoke project did not restore the exact package produced by this hook."
+    exit 1
+  fi
+
+  for framework in net8.0 net9.0 net10.0; do
+    NUGET_PACKAGES="${packed_packages}" dotnet build \
+      samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
+      --framework "${framework}" \
+      --configuration Release \
+      --no-restore \
+      -p:UsePackedPgYeet=true \
+      -p:PgYeetPackageVersion="${package_version}" \
+      -warnaserror
+    dotnet "samples/PgYeet.PackageSmoke/bin/Release/${framework}/PgYeet.PackageSmoke.dll"
+  done
+fi
+
+echo "PgYeet pre-push checks passed."

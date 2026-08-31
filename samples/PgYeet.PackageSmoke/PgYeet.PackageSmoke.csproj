@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <UsePackedPgYeet Condition="'$(UsePackedPgYeet)' == ''">false</UsePackedPgYeet>
+    <PgYeetPackageVersion Condition="'$(PgYeetPackageVersion)' == ''">1.0.0</PgYeetPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UsePackedPgYeet)' != 'true'">
+    <ProjectReference Include="..\..\PgYeet\PgYeet.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackedPgYeet)' == 'true'">
+    <PackageReference Include="PgYeet" Version="$(PgYeetPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <!-- A net9 app consumes the net8 PgYeet asset with its supported EF/Npgsql 8 dependency line. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+</Project>

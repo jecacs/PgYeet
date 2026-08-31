@@ -1,71 +1,361 @@
 name: release
 
-# Publishes the PgYeet package to nuget.org when a version tag is pushed, e.g.
-#   git tag v0.1.0 && git push origin v0.1.0
-# The package version is taken from the tag (v0.1.0 -> 0.1.0), so the .csproj
-# <Version> doesn't need to be bumped by hand. Manual runs are also allowed.
+# A release is produced only from a version tag that exactly matches the project version and
+# points to a commit already merged into main. Build/test jobs never receive publishing rights.
 on:
   push:
-    tags: [ 'v*.*.*' ]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Package version (e.g. 0.1.0)'
-        required: true
+    tags: ['v*']
 
 permissions:
   contents: read
-  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
+  validate:
+    name: validate-and-pack
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      sdk_version: ${{ steps.sdk.outputs.version }}
+      package_name: ${{ steps.package.outputs.package_name }}
+      symbol_name: ${{ steps.package.outputs.symbol_name }}
+      package_sha256: ${{ steps.package.outputs.package_sha256 }}
+      symbol_sha256: ${{ steps.package.outputs.symbol_sha256 }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dotnet-version: '8.0.x'
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Resolve version
-        id: version
+      - name: Set up .NET 8, 9, and 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+          dotnet-quality: ga
+          global-json-file: global.json
+
+      - name: Verify SDK selection
+        id: sdk
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          pinned_version="$(jq -r '.sdk.version' global.json)"
+          selected_version="$(dotnet --version)"
+          if [[ "${selected_version}" != "${pinned_version}" ]]; then
+            echo "global.json pins SDK ${pinned_version}, but dotnet selected ${selected_version}."
+            dotnet --info
+            exit 1
+          fi
+          echo "version=${pinned_version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate tag and release commit
+        shell: bash
+        run: |
+          package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+          if [[ -z "${package_version}" || "${GITHUB_REF_NAME}" != "v${package_version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match project version ${package_version:-<missing>}."
+            exit 1
           fi
 
-      - name: Restore
-        run: dotnet restore
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Release commit ${GITHUB_SHA} is not contained in origin/main."
+            exit 1
+          fi
+
+      - name: Restore and audit dependencies
+        run: >-
+          dotnet restore PgYeet.sln
+          --locked-mode
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -warnaserror
 
       - name: Build
-        run: dotnet build --no-restore -c Release
+        run: dotnet build PgYeet.sln --no-restore --configuration Release -warnaserror
 
-      # ubuntu-latest ships with Docker, so the Testcontainers integration tests
-      # run against a real PostgreSQL. Publishing is gated on them passing.
-      - name: Test
-        run: dotnet test --no-build -c Release --verbosity normal
+      - name: Verify formatting
+        run: dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
 
-      - name: Pack
-        run: >
-          dotnet pack PgYeet/PgYeet.csproj -c Release
-          -p:Version=${{ steps.version.outputs.value }}
-          -p:ContinuousIntegrationBuild=true
-          -o artifacts
+      - name: Test against PostgreSQL
+        run: >-
+          dotnet test PgYeet.Tests/PgYeet.Tests.csproj
+          --no-build
+          --configuration Release
+          --verbosity normal
 
-      # Trusted publishing: exchange the GitHub OIDC token for a short-lived NuGet
-      # API key. No long-lived secret stored in the repo. `user` is the NuGet
-      # account that owns the trusted-publishing policy (Package Owner).
-      - name: NuGet login
+      - name: Pack and record exact artifacts
+        id: package
+        shell: bash
+        run: |
+          package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+          dotnet pack PgYeet/PgYeet.csproj \
+            --no-build \
+            --no-restore \
+            --configuration Release \
+            -p:ContinuousIntegrationBuild=true \
+            --output artifacts
+
+          package_name="PgYeet.${package_version}.nupkg"
+          symbol_name="PgYeet.${package_version}.snupkg"
+          package_path="artifacts/${package_name}"
+          symbol_path="artifacts/${symbol_name}"
+
+          mapfile -t packages < <(find artifacts -maxdepth 1 -type f -name '*.nupkg' -print)
+          mapfile -t symbols < <(find artifacts -maxdepth 1 -type f -name '*.snupkg' -print)
+          if (( ${#packages[@]} != 1 || ${#symbols[@]} != 1 )); then
+            echo "Expected exactly one nupkg and one snupkg."
+            find artifacts -maxdepth 1 -type f -print
+            exit 1
+          fi
+          test -f "${package_path}"
+          test -f "${symbol_path}"
+          package_entries="$(unzip -Z1 "${package_path}")"
+          symbol_entries="$(unzip -Z1 "${symbol_path}")"
+
+          nuspec="$(unzip -p "${package_path}" PgYeet.nuspec)"
+          grep -Fq '<id>PgYeet</id>' <<< "${nuspec}"
+          grep -Fq "<version>${package_version}</version>" <<< "${nuspec}"
+          grep -Fq '<license type="expression">MIT</license>' <<< "${nuspec}"
+          grep -Fq "commit=\"${GITHUB_SHA}\"" <<< "${nuspec}"
+
+          readme="$(sed -n 's:.*<readme>\(.*\)</readme>.*:\1:p' <<< "${nuspec}")"
+          icon="$(sed -n 's:.*<icon>\(.*\)</icon>.*:\1:p' <<< "${nuspec}")"
+          test -n "${readme}"
+          test -n "${icon}"
+          grep -Fqx "${readme}" <<< "${package_entries}"
+          grep -Fqx "${icon}" <<< "${package_entries}"
+
+          for framework in net8.0 net10.0; do
+            grep -Fqx "lib/${framework}/PgYeet.dll" <<< "${package_entries}"
+            grep -Fqx "lib/${framework}/PgYeet.xml" <<< "${package_entries}"
+            grep -Fqx "lib/${framework}/PgYeet.pdb" <<< "${symbol_entries}"
+          done
+          if [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$' <<< "${package_entries}")" != 4 ]] ||
+             [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.pdb$' <<< "${symbol_entries}")" != 2 ]]; then
+            echo "Package contains an unexpected PgYeet target-framework asset."
+            exit 1
+          fi
+
+          package_sha256="$(sha256sum "${package_path}" | cut -d ' ' -f 1)"
+          symbol_sha256="$(sha256sum "${symbol_path}" | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "${package_sha256}" "${package_name}" > "${package_path}.sha256"
+          printf '%s  %s\n' "${symbol_sha256}" "${symbol_name}" > "${symbol_path}.sha256"
+
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+          echo "package_name=${package_name}" >> "${GITHUB_OUTPUT}"
+          echo "symbol_name=${symbol_name}" >> "${GITHUB_OUTPUT}"
+          echo "package_sha256=${package_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "symbol_sha256=${symbol_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run the exact packed package on .NET 8, 9, and 10
+        shell: bash
+        env:
+          NUGET_PACKAGES: ${{ runner.temp }}/pgyeet-release-packages
+          PGYEET_LOCAL_FEED: ${{ github.workspace }}/artifacts
+          PACKAGE_NAME: ${{ steps.package.outputs.package_name }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          package_path="artifacts/${PACKAGE_NAME}"
+          dotnet restore samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
+            -p:UsePackedPgYeet=true \
+            -p:PgYeetPackageVersion="${PACKAGE_VERSION}" \
+            --configfile samples/PgYeet.PackageSmoke/NuGet.packed.config \
+            -p:NuGetAudit=true \
+            -p:NuGetAuditMode=all \
+            -warnaserror
+
+          restored_path="${NUGET_PACKAGES}/pgyeet/${PACKAGE_VERSION}/pgyeet.${PACKAGE_VERSION}.nupkg"
+          if [[ ! -f "${restored_path}" ]] || ! cmp --silent "${package_path}" "${restored_path}"; then
+            echo "The smoke project did not restore the exact package produced by this release."
+            exit 1
+          fi
+
+          for framework in net8.0 net9.0 net10.0; do
+            dotnet build samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
+              --framework "${framework}" \
+              --configuration Release \
+              --no-restore \
+              -p:UsePackedPgYeet=true \
+              -p:PgYeetPackageVersion="${PACKAGE_VERSION}" \
+              -warnaserror
+            dotnet "samples/PgYeet.PackageSmoke/bin/Release/${framework}/PgYeet.PackageSmoke.dll"
+          done
+
+      - name: Transfer verified release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-release-candidate
+          path: artifacts/PgYeet.*
+          if-no-files-found: error
+          retention-days: 7
+
+  attest:
+    name: attest-package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-release-candidate
+          path: artifacts
+
+      - name: Verify transferred artifacts
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+          PACKAGE_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+          SYMBOL_NAME: ${{ needs.validate.outputs.symbol_name }}
+          SYMBOL_SHA256: ${{ needs.validate.outputs.symbol_sha256 }}
+        run: |
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "artifacts/${PACKAGE_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "artifacts/${SYMBOL_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "${PACKAGE_NAME}" | \
+            cmp --silent - "artifacts/${PACKAGE_NAME}.sha256"
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "${SYMBOL_NAME}" | \
+            cmp --silent - "artifacts/${SYMBOL_NAME}.sha256"
+
+      - name: Attest package provenance
+        id: attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/${{ needs.validate.outputs.package_name }}
+
+      - name: Verify and preserve attestation bundle
+        shell: bash
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attestation.outputs.bundle-path }}
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+        run: |
+          bundle_path="artifacts/${PACKAGE_NAME}.sigstore.json"
+          cp -- "${ATTESTATION_BUNDLE}" "${bundle_path}"
+          gh attestation verify "artifacts/${PACKAGE_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --bundle "${bundle_path}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-ref "${GITHUB_REF}" \
+            --source-digest "${GITHUB_SHA}" \
+            --deny-self-hosted-runners
+
+      - name: Transfer attested release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: attested-release-candidate
+          path: artifacts/PgYeet.*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-nuget:
+    name: publish-nuget
+    needs: [validate, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: nuget
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # This privileged job intentionally has no checkout and never executes repository code.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ needs.validate.outputs.sdk_version }}
+
+      - name: Download attested release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: attested-release-candidate
+          path: artifacts
+
+      - name: Verify package, symbols, and provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+          PACKAGE_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+          SYMBOL_NAME: ${{ needs.validate.outputs.symbol_name }}
+          SYMBOL_SHA256: ${{ needs.validate.outputs.symbol_sha256 }}
+        run: |
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "artifacts/${PACKAGE_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "artifacts/${SYMBOL_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "${PACKAGE_NAME}" | \
+            cmp --silent - "artifacts/${PACKAGE_NAME}.sha256"
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "${SYMBOL_NAME}" | \
+            cmp --silent - "artifacts/${SYMBOL_NAME}.sha256"
+          gh attestation verify "artifacts/${PACKAGE_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --bundle "artifacts/${PACKAGE_NAME}.sigstore.json" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-ref "${GITHUB_REF}" \
+            --source-digest "${GITHUB_SHA}" \
+            --deny-self-hosted-runners
+
+      - name: NuGet login (OIDC)
         id: login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: jecacs
 
-      - name: Push to NuGet
-        run: >
-          dotnet nuget push "artifacts/*.nupkg"
-          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+      - name: Push exact package to NuGet
+        env:
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+        run: >-
+          dotnet nuget push "artifacts/${PACKAGE_NAME}"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
           --source https://api.nuget.org/v3/index.json
-          --skip-duplicate
+
+  publish-github-release:
+    name: publish-github-release
+    needs: [validate, attest, publish-nuget]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download attested release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: attested-release-candidate
+          path: artifacts
+
+      - name: Verify and publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+          PACKAGE_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+          SYMBOL_NAME: ${{ needs.validate.outputs.symbol_name }}
+          SYMBOL_SHA256: ${{ needs.validate.outputs.symbol_sha256 }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "artifacts/${PACKAGE_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "artifacts/${SYMBOL_NAME}" | sha256sum --check --strict
+          printf '%s  %s\n' "${PACKAGE_SHA256}" "${PACKAGE_NAME}" | \
+            cmp --silent - "artifacts/${PACKAGE_NAME}.sha256"
+          printf '%s  %s\n' "${SYMBOL_SHA256}" "${SYMBOL_NAME}" | \
+            cmp --silent - "artifacts/${SYMBOL_NAME}.sha256"
+
+          release_flags=(--verify-tag --title "PgYeet ${VERSION}" --generate-notes)
+          if [[ "${VERSION}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            "artifacts/${PACKAGE_NAME}" \
+            "artifacts/${PACKAGE_NAME}.sha256" \
+            "artifacts/${PACKAGE_NAME}.sigstore.json" \
+            "artifacts/${SYMBOL_NAME}" \
+            "artifacts/${SYMBOL_NAME}.sha256" \
+            "${release_flags[@]}"

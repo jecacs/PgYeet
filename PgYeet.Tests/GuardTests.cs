@@ -55,6 +55,35 @@ public sealed class HiLoPk
     public string? Tag { get; set; }
 }
 
+public sealed class CompositeGeneratedPk
+{
+    public int TenantId { get; set; }
+    public int Id { get; set; }
+    public string? Tag { get; set; }
+}
+
+public sealed class IdentityOnly
+{
+    public int Id { get; set; }
+}
+
+public sealed class NonKeyIdentity
+{
+    public int Id { get; set; }
+    public int SequenceValue { get; set; }
+}
+
+public class TpcVehicle
+{
+    public int Id { get; set; }
+    public string? Name { get; set; }
+}
+
+public sealed class TpcCar : TpcVehicle
+{
+    public int DoorCount { get; set; }
+}
+
 public sealed class GuardsDbContext : DbContext
 {
     // The guards fire while the COPY mapping is built, before any connection is opened,
@@ -71,6 +100,20 @@ public sealed class GuardsDbContext : DbContext
         b.Entity<ShadowOwner>(e => e.Property<string>("Hidden").IsRequired());   // required shadow
         b.Entity<UuidDefaultPk>(e => e.Property(u => u.Id).HasDefaultValueSql("gen_random_uuid()"));
         b.Entity<HiLoPk>(e => e.Property(h => h.Id).UseHiLo());
+        b.Entity<CompositeGeneratedPk>(e =>
+        {
+            e.HasKey(x => new { x.TenantId, x.Id });
+            e.Property(x => x.TenantId).ValueGeneratedNever();
+            e.Property(x => x.Id).UseIdentityByDefaultColumn();
+        });
+        b.Entity<IdentityOnly>();
+        b.Entity<NonKeyIdentity>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.SequenceValue).UseIdentityByDefaultColumn();
+        });
+        b.Entity<TpcVehicle>().UseTpcMappingStrategy();
+        b.Entity<TpcCar>();
     }
 }
 
@@ -134,5 +177,41 @@ public sealed class GuardTests
         var ex = await Assert.ThrowsAsync<NotSupportedException>(
             () => db.Set<HiLoPk>().YeetAsync(new[] { new HiLoPk() }));
         Assert.Contains("identity/serial", ex.Message);
+    }
+
+    [Fact]
+    public async Task Store_generated_composite_pk_is_rejected()
+    {
+        await using var db = new GuardsDbContext();
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+            () => db.Set<CompositeGeneratedPk>().YeetAsync(new[] { new CompositeGeneratedPk() }));
+        Assert.Contains("composite primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Entity_with_only_generated_columns_is_rejected()
+    {
+        await using var db = new GuardsDbContext();
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+            () => db.Set<IdentityOnly>().YeetAsync(new[] { new IdentityOnly() }));
+        Assert.Contains("no insertable", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Non_key_identity_is_rejected()
+    {
+        await using var db = new GuardsDbContext();
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+            () => db.Set<NonKeyIdentity>().YeetAsync(new[] { new NonKeyIdentity() }));
+        Assert.Contains("non-primary-key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Tpc_hierarchy_is_rejected()
+    {
+        await using var db = new GuardsDbContext();
+        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+            () => db.Set<TpcVehicle>().YeetAsync(new[] { new TpcVehicle() }));
+        Assert.Contains("inheritance hierarchy", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }
