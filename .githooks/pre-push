@@ -1,0 +1,77 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${PGYEET_SKIP_PREPUSH:-0}" = "1" ]; then
+  echo "PgYeet pre-push checks skipped (PGYEET_SKIP_PREPUSH=1)."
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+pinned_sdk="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' global.json | head -1)"
+selected_sdk="$(dotnet --version)"
+if [ -z "${pinned_sdk}" ] || [ "${selected_sdk}" != "${pinned_sdk}" ]; then
+  echo "global.json pins SDK ${pinned_sdk:-<missing>}, but dotnet selected ${selected_sdk}."
+  exit 1
+fi
+
+dotnet restore PgYeet.sln --locked-mode -p:NuGetAudit=true -p:NuGetAuditMode=all -warnaserror
+dotnet build PgYeet.sln --no-restore --configuration Release -warnaserror
+dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
+
+if [ "${PGYEET_PREPUSH_SKIP_TESTS:-0}" != "1" ]; then
+  dotnet test PgYeet.Tests/PgYeet.Tests.csproj --no-build --configuration Release --verbosity normal
+fi
+
+package_dir="$(mktemp -d "${TMPDIR:-/tmp}/pgyeet-prepush.XXXXXX")"
+trap 'rm -rf -- "${package_dir}"' EXIT HUP INT TERM
+dotnet pack PgYeet/PgYeet.csproj \
+  --no-build \
+  --no-restore \
+  --configuration Release \
+  -p:ContinuousIntegrationBuild=true \
+  --output "${package_dir}"
+
+package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+package_path="${package_dir}/PgYeet.${package_version}.nupkg"
+symbol_path="${package_dir}/PgYeet.${package_version}.snupkg"
+test -f "${package_path}"
+test -f "${symbol_path}"
+
+set -- "${package_dir}"/*.nupkg
+if [ "$#" -ne 1 ] || [ "$1" != "${package_path}" ]; then
+  echo "Expected exactly ${package_path}."
+  exit 1
+fi
+set -- "${package_dir}"/*.snupkg
+if [ "$#" -ne 1 ] || [ "$1" != "${symbol_path}" ]; then
+  echo "Expected exactly ${symbol_path}."
+  exit 1
+fi
+
+nuspec="$(unzip -p "${package_path}" PgYeet.nuspec)"
+package_entries="$(unzip -Z1 "${package_path}")"
+symbol_entries="$(unzip -Z1 "${symbol_path}")"
+printf '%s\n' "${nuspec}" | grep -Fq '<id>PgYeet</id>'
+printf '%s\n' "${nuspec}" | grep -Fq "<version>${package_version}</version>"
+printf '%s\n' "${nuspec}" | grep -Fq '<license type="expression">MIT</license>'
+printf '%s\n' "${package_entries}" | grep -Fqx README.nuget.md
+printf '%s\n' "${package_entries}" | grep -Fqx icon.png
+
+for framework in net10.0; do
+  printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.dll"
+  printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.xml"
+  printf '%s\n' "${symbol_entries}" | grep -Fqx "lib/${framework}/PgYeet.pdb"
+done
+if [ "$(printf '%s\n' "${package_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$')" -ne 2 ] ||
+   [ "$(printf '%s\n' "${symbol_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.pdb$')" -ne 1 ]; then
+  echo "Package contains an unexpected PgYeet target-framework asset."
+  exit 1
+fi
+
+if [ "${PGYEET_PREPUSH_SKIP_TESTS:-0}" != "1" ]; then
+  bash scripts/test-package.sh "${package_path}"
+fi
+
+echo "PgYeet pre-push checks passed."

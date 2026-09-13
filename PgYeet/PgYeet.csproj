@@ -1,37 +1,41 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-    <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <LangVersion>latest</LangVersion>
-        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <EnablePackageValidation>true</EnablePackageValidation>
 
-        <PackageId>PgYeet</PackageId>
-        <Version>0.2.1</Version>
-        <Authors>Yevhen</Authors>
-        <Title>PgYeet — bulk insert for EF Core on PostgreSQL</Title>
-        <Description>Minimal, near zero-allocation bulk INSERT for EF Core on PostgreSQL via binary COPY. A tiny alternative to EFCore.BulkExtensions: ~10-13x faster than SaveChanges and orders of magnitude less memory.</Description>
-        <PackageTags>postgresql;postgres;pgsql;npgsql;efcore;ef-core;entity-framework-core;entityframeworkcore;dotnet;csharp;bulk;bulk-insert;bulkinsert;bulkcopy;sqlbulkcopy;batch-insert;bulk-import;insert;copy;binary-copy;savechanges;etl;performance;high-performance;orm</PackageTags>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageIcon>icon.png</PackageIcon>
-        <RepositoryType>git</RepositoryType>
-        <RepositoryUrl>https://github.com/jecacs/PgYeet</RepositoryUrl>
-        <PackageProjectUrl>https://github.com/jecacs/PgYeet</PackageProjectUrl>
+    <PackageId>PgYeet</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Yevhen Koval</Authors>
+    <Copyright>Copyright (c) 2026 Yevhen Koval</Copyright>
+    <Title>PgYeet — bulk insert for EF Core on PostgreSQL</Title>
+    <Description>High-throughput PostgreSQL bulk inserts from Entity Framework Core models via Npgsql binary COPY, with optional identity key write-back.</Description>
+    <PackageTags>postgresql;npgsql;ef-core;bulk-insert;binary-copy;performance</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.nuget.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>https://github.com/jecacs/PgYeet/blob/v1.0.0/CHANGELOG.md</PackageReleaseNotes>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/jecacs/PgYeet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/jecacs/PgYeet</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
 
-        <IncludeSymbols>true</IncludeSymbols>
-        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    </PropertyGroup>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
 
-    <ItemGroup>
-        <None Include="..\README.md" Pack="true" PackagePath="\"/>
-        <None Include="..\assets\icon.png" Pack="true" PackagePath="\"/>
-    </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README.nuget.md" Pack="true" PackagePath="\" />
+    <None Include="..\assets\icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
-    <ItemGroup>
-        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11"/>
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.13"/>
-    </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[10.0.12,11.0.0)" />
+    <PackageReference Include="Npgsql" Version="[10.0.3,11.0.0)" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="[10.0.3,11.0.0)" />
+  </ItemGroup>
 
 </Project>

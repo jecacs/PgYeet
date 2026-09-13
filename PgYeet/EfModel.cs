@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -15,7 +16,10 @@ internal sealed record EfColumn<T>(
 
 internal sealed record EfIdentity<T>(
     string Column,
-    Action<T, long> AssignReserved);
+    Action<long> ValidateReserved,
+    Action<T, long> AssignReserved,
+    Func<T, object?> ReadCurrent,
+    Action<T, object?> Restore);
 
 internal sealed record EfTableInfo<T>(
     string QuotedTable,
@@ -53,15 +57,27 @@ internal static class EfModel
             if (ReferenceEquals(property, identityProperty)) continue;   // DB-generated, never written
             if (property.GetComputedColumnSql() is not null) continue;   // server-computed
 
+            if (property.GetValueGenerationStrategy() is
+                NpgsqlValueGenerationStrategy.IdentityByDefaultColumn or
+                NpgsqlValueGenerationStrategy.IdentityAlwaysColumn or
+                NpgsqlValueGenerationStrategy.SerialColumn)
+                throw new NotSupportedException(
+                    $"PgYeet: non-primary-key property '{entityType.DisplayName()}.{property.Name}' is a " +
+                    "PostgreSQL identity/serial column. PgYeet 1.x supports database-generated values only " +
+                    "for a single-column primary key.");
+
             if (property.PropertyInfo is not { } propertyInfo)
             {
+                if (!property.IsShadowProperty())
+                    throw new NotSupportedException(
+                        $"PgYeet: '{typeof(T).Name}.{property.Name}' is a field-only property. " +
+                        "Map it to a readable CLR property so its value can be copied.");
                 // Shadow property: no CLR member to read the value from. Omitting the column is
                 // only safe when the database can fill it on its own — otherwise fail fast here
                 // instead of a cryptic not-null violation (typical culprits: required shadow FKs).
                 if (!property.IsColumnNullable(store)
                     && property.GetDefaultValueSql() is null
-                    && !property.TryGetDefaultValue(out _)
-                    && property.ValueGenerated == ValueGenerated.Never)
+                    && !property.TryGetDefaultValue(out _))
                     throw new NotSupportedException(
                         $"PgYeet: '{typeof(T).Name}.{property.Name}' is a required shadow property with no " +
                         "database default — PgYeet cannot supply a value for it. " +
@@ -76,12 +92,31 @@ internal static class EfModel
             columns.Add(new EfColumn<T>(column, storeType, BuildWriter<T>(property, propertyInfo, StripFacets(storeType))));
         }
 
+        if (columns.Count == 0)
+            throw new NotSupportedException(
+                $"PgYeet: '{typeof(T).Name}' has no insertable CLR-backed columns. " +
+                "Entities whose rows contain only database-generated or computed values are not supported.");
+
         EfIdentity<T>? identity = null;
         if (identityProperty?.PropertyInfo is { } idInfo)
         {
+            if (idInfo.GetMethod is null || idInfo.SetMethod is null)
+                throw new NotSupportedException(
+                    $"PgYeet: identity property '{typeof(T).Name}.{identityProperty.Name}' must have " +
+                    "a CLR getter and setter for generated-key write-back.");
+            var (validate, assign) = BuildIdAssigner<T>(identityProperty, idInfo);
             identity = new EfIdentity<T>(
                 identityProperty.GetColumnName(store)!,
-                BuildIdAssigner<T>(identityProperty, idInfo));
+                validate,
+                assign,
+                idInfo.GetValue,
+                idInfo.SetValue);
+        }
+        else if (identityProperty is not null)
+        {
+            throw new NotSupportedException(
+                $"PgYeet: identity property '{typeof(T).Name}.{identityProperty.Name}' must be mapped " +
+                "to a CLR property with a getter and setter for generated-key write-back.");
         }
 
         return new EfTableInfo<T>(
@@ -99,6 +134,11 @@ internal static class EfModel
         if (entityType.FindDiscriminatorProperty() is not null)
             throw new NotSupportedException(
                 $"PgYeet: '{typeof(T).Name}' uses TPH inheritance (discriminator column) — not supported yet.");
+
+        if (entityType.BaseType is not null || entityType.GetDerivedTypes().Any())
+            throw new NotSupportedException(
+                $"PgYeet: '{typeof(T).Name}' participates in an inheritance hierarchy (for example TPC or TPT) " +
+                "— inheritance mappings are not supported.");
 
         if (entityType.GetTableMappings().Skip(1).Any())
             throw new NotSupportedException(
@@ -135,7 +175,24 @@ internal static class EfModel
     private static IProperty? FindIdentity(IEntityType entityType)
     {
         var pk = entityType.FindPrimaryKey();
-        if (pk is not { Properties.Count: 1 }) return null;
+        if (pk is null) return null;
+
+        if (pk.Properties.Count != 1)
+        {
+            var generatedProperties = pk.Properties
+                .Where(IsStoreGeneratedOnAdd)
+                .Select(p => p.Name)
+                .ToArray();
+
+            if (generatedProperties.Length > 0)
+                throw new NotSupportedException(
+                    $"PgYeet: composite primary key on '{entityType.DisplayName()}' contains store-generated " +
+                    $"property/properties ({string.Join(", ", generatedProperties)}). Generated-key write-back " +
+                    "is supported only for a single-column PostgreSQL identity/serial primary key. Assign every " +
+                    "composite key value in the application and map them with ValueGeneratedNever().");
+
+            return null;
+        }
 
         var property = pk.Properties[0];
         if (property.ValueGenerated != ValueGenerated.OnAdd) return null;
@@ -144,7 +201,10 @@ internal static class EfModel
         if (strategy is NpgsqlValueGenerationStrategy.IdentityByDefaultColumn
             or NpgsqlValueGenerationStrategy.IdentityAlwaysColumn
             or NpgsqlValueGenerationStrategy.SerialColumn)
+        {
+            GuardIdentityOrdering(property, strategy);
             return property;
+        }
 
         if (strategy != NpgsqlValueGenerationStrategy.None
             || property.GetDefaultValueSql() is not null
@@ -156,6 +216,31 @@ internal static class EfModel
 
         return null; // client-generated (e.g. Guid): treated as an app-assigned column
     }
+
+    private static void GuardIdentityOrdering(
+        IReadOnlyProperty property,
+        NpgsqlValueGenerationStrategy strategy)
+    {
+        if (strategy is not (NpgsqlValueGenerationStrategy.IdentityByDefaultColumn
+            or NpgsqlValueGenerationStrategy.IdentityAlwaysColumn))
+            return;
+
+        if ((property.GetIdentityIncrementBy() ?? 1) <= 0)
+            throw new NotSupportedException(
+                $"PgYeet: identity property '{property.DeclaringType.DisplayName()}.{property.Name}' uses a " +
+                "non-positive sequence increment. Generated-key correlation requires a positive increment.");
+
+        if (property.GetIdentityIsCyclic() is true)
+            throw new NotSupportedException(
+                $"PgYeet: identity property '{property.DeclaringType.DisplayName()}.{property.Name}' uses a " +
+                "cyclic sequence. Generated-key correlation does not support sequence wraparound.");
+    }
+
+    private static bool IsStoreGeneratedOnAdd(IReadOnlyProperty property)
+        => property.GetValueGenerationStrategy() != NpgsqlValueGenerationStrategy.None
+           || property.GetDefaultValueSql() is not null
+           || property.TryGetDefaultValue(out _)
+           || property.GetComputedColumnSql() is not null;
 
     private static Func<NpgsqlBinaryImporter, T, CancellationToken, ValueTask> BuildWriter<T>(
         IReadOnlyProperty property,
@@ -184,8 +269,8 @@ internal static class EfModel
 
         var (helperName, typeArgs) =
             underlying is not null ? (nameof(NullableWriter), [typeof(T), underlying]) :
-            propType.IsValueType   ? (nameof(ValueWriter), [typeof(T), propType]) :
-                                     (nameof(RefWriter),      new[] { typeof(T), propType });
+            propType.IsValueType ? (nameof(ValueWriter), [typeof(T), propType]) :
+                                     (nameof(RefWriter), new[] { typeof(T), propType });
 
         var helper = typeof(EfModel).GetMethod(helperName, BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(typeArgs);
@@ -199,14 +284,20 @@ internal static class EfModel
     /// through a compiled typed setter — no per-row reflection or boxing; converter-backed keys
     /// (e.g. strongly-typed IDs) are mapped back through the converter.
     /// </summary>
-    private static Action<T, long> BuildIdAssigner<T>(IReadOnlyProperty property, PropertyInfo propertyInfo)
+    private static (Action<long> Validate, Action<T, long> Assign) BuildIdAssigner<T>(
+        IReadOnlyProperty property,
+        PropertyInfo propertyInfo)
     {
         var converter = property.GetValueConverter() ?? property.FindTypeMapping()?.Converter;
         if (converter is not null)
         {
             var providerType = Nullable.GetUnderlyingType(converter.ProviderClrType) ?? converter.ProviderClrType;
-            return (entity, reserved) =>
-                propertyInfo.SetValue(entity, converter.ConvertFromProvider(ConvertId(reserved, providerType)));
+            object? ConvertReserved(long reserved)
+                => converter.ConvertFromProvider(ConvertId(reserved, providerType));
+
+            return (
+                reserved => _ = ConvertReserved(reserved),
+                (entity, reserved) => propertyInfo.SetValue(entity, ConvertReserved(reserved)));
         }
 
         var setMethod = propertyInfo.SetMethod;
@@ -215,19 +306,25 @@ internal static class EfModel
         {
             if (clrType == typeof(int))
             {
-                var set = (Action<T, int>)setMethod.CreateDelegate(typeof(Action<T, int>));
-                return (entity, reserved) => set(entity, checked((int)reserved));
+                var set = setMethod.CreateDelegate<Action<T, int>>();
+                return (
+                    reserved => _ = checked((int)reserved),
+                    (entity, reserved) => set(entity, checked((int)reserved)));
             }
             if (clrType == typeof(long))
-                return (Action<T, long>)setMethod.CreateDelegate(typeof(Action<T, long>));
+                return (static _ => { }, setMethod.CreateDelegate<Action<T, long>>());
             if (clrType == typeof(short))
             {
-                var set = (Action<T, short>)setMethod.CreateDelegate(typeof(Action<T, short>));
-                return (entity, reserved) => set(entity, checked((short)reserved));
+                var set = setMethod.CreateDelegate<Action<T, short>>();
+                return (
+                    reserved => _ = checked((short)reserved),
+                    (entity, reserved) => set(entity, checked((short)reserved)));
             }
         }
 
-        return (entity, reserved) => propertyInfo.SetValue(entity, ConvertId(reserved, clrType));
+        return (
+            reserved => _ = ConvertId(reserved, clrType),
+            (entity, reserved) => propertyInfo.SetValue(entity, ConvertId(reserved, clrType)));
     }
 
     private static Func<NpgsqlBinaryImporter, T, CancellationToken, ValueTask> ValueWriter<T, TV>(
@@ -280,7 +377,7 @@ internal static class EfModel
         if (t == typeof(long)) return value;
         if (t == typeof(int)) return checked((int)value);
         if (t == typeof(short)) return checked((short)value);
-        return Convert.ChangeType(value, t);
+        return Convert.ChangeType(value, t, CultureInfo.InvariantCulture);
     }
 
     private static string StripFacets(string storeType)

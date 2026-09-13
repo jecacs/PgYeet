@@ -1,27 +1,134 @@
-name: build
+name: ci
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dotnet-version: '8.0.x'
+          persist-credentials: false
 
-      - name: Restore
-        run: dotnet restore
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-quality: ga
+          global-json-file: global.json
+
+      - name: Verify SDK selection
+        shell: bash
+        run: |
+          pinned_version="$(jq -r '.sdk.version' global.json)"
+          selected_version="$(dotnet --version)"
+          if [[ "${selected_version}" != "${pinned_version}" ]]; then
+            echo "global.json pins SDK ${pinned_version}, but dotnet selected ${selected_version}."
+            dotnet --info
+            exit 1
+          fi
+
+      - name: Restore and audit dependencies
+        run: >-
+          dotnet restore PgYeet.sln
+          --locked-mode
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -warnaserror
 
       - name: Build
-        run: dotnet build --no-restore -c Release
+        run: dotnet build PgYeet.sln --no-restore --configuration Release -warnaserror
 
-      # ubuntu-latest runners ship with Docker, so the Testcontainers integration tests
-      # spin up a real PostgreSQL container.
-      - name: Test
-        run: dotnet test --no-build -c Release --verbosity normal
+      - name: Verify formatting
+        run: dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
+
+      # Testcontainers starts a real PostgreSQL container. The .NET 10 provider runs from the
+      # locked build, so provider behavior is exercised rather than mocked.
+      - name: Test PostgreSQL and release recovery
+        run: >-
+          dotnet test PgYeet.Tests/PgYeet.Tests.csproj
+          --no-build
+          --configuration Release
+          --verbosity normal
+
+      - name: Pack and verify package layout
+        shell: bash
+        run: |
+          package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+          dotnet pack PgYeet/PgYeet.csproj \
+            --no-build \
+            --no-restore \
+            --configuration Release \
+            -p:ContinuousIntegrationBuild=true \
+            --output artifacts
+
+          package_name="PgYeet.${package_version}.nupkg"
+          symbol_name="PgYeet.${package_version}.snupkg"
+          package_path="artifacts/${package_name}"
+          symbol_path="artifacts/${symbol_name}"
+
+          mapfile -t packages < <(find artifacts -maxdepth 1 -type f -name '*.nupkg' -print)
+          mapfile -t symbols < <(find artifacts -maxdepth 1 -type f -name '*.snupkg' -print)
+          if (( ${#packages[@]} != 1 || ${#symbols[@]} != 1 )); then
+            echo "Expected exactly one nupkg and one snupkg."
+            find artifacts -maxdepth 1 -type f -print
+            exit 1
+          fi
+          test -f "${package_path}"
+          test -f "${symbol_path}"
+          package_entries="$(unzip -Z1 "${package_path}")"
+          symbol_entries="$(unzip -Z1 "${symbol_path}")"
+
+          nuspec="$(unzip -p "${package_path}" PgYeet.nuspec)"
+          grep -Fq '<id>PgYeet</id>' <<< "${nuspec}"
+          grep -Fq "<version>${package_version}</version>" <<< "${nuspec}"
+          grep -Fq "commit=\"${GITHUB_SHA}\"" <<< "${nuspec}"
+
+          readme="$(sed -n 's:.*<readme>\(.*\)</readme>.*:\1:p' <<< "${nuspec}")"
+          icon="$(sed -n 's:.*<icon>\(.*\)</icon>.*:\1:p' <<< "${nuspec}")"
+          test -n "${readme}"
+          test -n "${icon}"
+          grep -Fqx "${readme}" <<< "${package_entries}"
+          grep -Fqx "${icon}" <<< "${package_entries}"
+
+          for framework in net10.0; do
+            grep -Fqx "lib/${framework}/PgYeet.dll" <<< "${package_entries}"
+            grep -Fqx "lib/${framework}/PgYeet.xml" <<< "${package_entries}"
+            grep -Fqx "lib/${framework}/PgYeet.pdb" <<< "${symbol_entries}"
+          done
+          if [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$' <<< "${package_entries}")" != 2 ]] ||
+             [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.pdb$' <<< "${symbol_entries}")" != 1 ]]; then
+            echo "Package contains an unexpected PgYeet target-framework asset."
+            exit 1
+          fi
+
+          package_sha256="$(sha256sum "${package_path}" | cut -d ' ' -f 1)"
+          symbol_sha256="$(sha256sum "${symbol_path}" | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "${package_sha256}" "${package_name}" > "${package_path}.sha256"
+          printf '%s  %s\n' "${symbol_sha256}" "${symbol_name}" > "${symbol_path}.sha256"
+
+      - name: Run the exact packed package on .NET 10
+        shell: bash
+        run: |
+          package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
+          bash scripts/test-package.sh "artifacts/PgYeet.${package_version}.nupkg"
+
+      - name: Upload package smoke artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-smoke-${{ github.sha }}
+          path: artifacts/PgYeet.*
+          if-no-files-found: error
+          retention-days: 7

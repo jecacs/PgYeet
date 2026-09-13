@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <UsePackedPgYeet Condition="'$(UsePackedPgYeet)' == ''">false</UsePackedPgYeet>
+    <PgYeetPackageVersion Condition="'$(PgYeetPackageVersion)' == ''">1.0.0</PgYeetPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UsePackedPgYeet)' != 'true'">
+    <ProjectReference Include="..\..\PgYeet\PgYeet.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackedPgYeet)' == 'true'">
+    <PackageReference Include="PgYeet" Version="[$(PgYeetPackageVersion)]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+</Project>

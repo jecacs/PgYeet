@@ -1,0 +1,87 @@
+name: Bug report
+description: Report incorrect PgYeet behavior or a compatibility regression
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the private process linked below or in SECURITY.md.
+
+  - type: input
+    id: pgyeet-version
+    attributes:
+      label: PgYeet version
+      placeholder: 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: stack-versions
+    attributes:
+      label: EF Core, Npgsql, and PostgreSQL versions
+      placeholder: EF Core 10.0.x; Npgsql EF provider 10.0.x; PostgreSQL 18.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: path
+    attributes:
+      label: Insert path
+      options:
+        - Generated keys returned
+        - No key return (fast path)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: model
+    attributes:
+      label: Minimal EF model and mapping
+      description: Include only the entity and mapping required to reproduce the issue. Remove production identifiers and data.
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Actual behavior
+      description: Include the exception type and bounded diagnostics, but remove connection strings, row data, credentials, and other secrets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest safe code sample that demonstrates the issue.
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, .NET SDK/runtime, and container/runtime details when relevant.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed connection strings, passwords, tokens, row data, and other sensitive information.
+          required: true
+        - label: This is not a security vulnerability; suspected vulnerabilities must be reported privately.
+          required: true

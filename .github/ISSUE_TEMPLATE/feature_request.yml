@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a focused PgYeet API, mapping, or compatibility improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need, mapping gap, or compatibility issue should this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: Include compatibility and transaction implications where possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Relevant versions
+      description: PgYeet, EF Core, Npgsql, and PostgreSQL versions affected by the proposal.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to prepare a focused pull request following CONTRIBUTING.md.
+

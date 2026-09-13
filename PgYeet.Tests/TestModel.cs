@@ -40,15 +40,50 @@ public sealed class Order
     public string Reference { get; set; } = "";
 }
 
+public sealed class CompositeItem
+{
+    public int TenantId { get; set; }
+    public int Id { get; set; }
+    public string Label { get; set; } = "";
+}
+
+public sealed class CompositeGuidItem
+{
+    public Guid TenantId { get; set; }
+    public Guid Id { get; set; }
+    public string Label { get; set; } = "";
+}
+
+public sealed class BigOrder
+{
+    public OrderId Id { get; set; }
+    public string Reference { get; set; } = "";
+}
+
+public sealed class OrdinalRow
+{
+    public int Id { get; set; }
+    public string Value { get; set; } = "";
+}
+
 public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(options)
 {
     public DbSet<Person> People => Set<Person>();
     public DbSet<Item> Items => Set<Item>();
     public DbSet<Gadget> Gadgets => Set<Gadget>();
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<CompositeItem> CompositeItems => Set<CompositeItem>();
+    public DbSet<CompositeGuidItem> CompositeGuidItems => Set<CompositeGuidItem>();
+    public DbSet<BigOrder> BigOrders => Set<BigOrder>();
+    public DbSet<OrdinalRow> OrdinalRows => Set<OrdinalRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<OrdinalRow>(e =>
+        {
+            e.ToTable("ordinal_rows");
+            e.Property(x => x.Value).HasColumnName("__ord");
+        });
         b.Entity<Person>(e =>
         {
             e.ToTable("people");
@@ -77,6 +112,35 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
                 .HasConversion(id => id.Value, v => new OrderId(v))
                 .UseIdentityByDefaultColumn();
             e.Property(o => o.Reference).HasMaxLength(50);
+        });
+
+        b.Entity<CompositeItem>(e =>
+        {
+            e.ToTable("composite_items");
+            e.HasKey(x => new { x.TenantId, x.Id });
+            e.Property(x => x.TenantId).ValueGeneratedNever();
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Label).HasMaxLength(50);
+        });
+
+        b.Entity<CompositeGuidItem>(e =>
+        {
+            e.ToTable("composite_guid_items");
+            e.HasKey(x => new { x.TenantId, x.Id });
+            // EF may mark client-generated Guid keys OnAdd even though the database has no default.
+            // PgYeet must still copy the values supplied by the application.
+            e.Property(x => x.TenantId).ValueGeneratedOnAdd();
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.Label).HasMaxLength(50);
+        });
+
+        b.Entity<BigOrder>(e =>
+        {
+            e.ToTable("big_orders");
+            e.Property(x => x.Id)
+                .HasConversion<long>(id => id.Value, value => new OrderId(checked((int)value)))
+                .UseIdentityByDefaultColumn();
+            e.Property(x => x.Reference).HasMaxLength(50);
         });
     }
 }

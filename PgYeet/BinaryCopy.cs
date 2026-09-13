@@ -2,30 +2,54 @@ using Npgsql;
 
 namespace PgYeet;
 
-/// <summary>
-/// Low-level binary COPY runner. Each column is a precompiled writer that knows how to pull its
-/// value from the row and write it with the correct Postgres type (built by <see cref="EfModel"/>).
-/// </summary>
-public static class BinaryCopy
+internal static class BinaryCopy
 {
-    /// <summary>
-    /// Streams <paramref name="rows"/> into the table named by <paramref name="copyCommand"/> using
-    /// the supplied per-column <paramref name="writers"/>. Returns the number of rows written.
-    /// </summary>
-    public static async Task<ulong> WriteAsync<T>(
+    public static async Task<int> WriteAsync<T>(
         NpgsqlConnection connection,
         string copyCommand,
         IReadOnlyList<Func<NpgsqlBinaryImporter, T, CancellationToken, ValueTask>> writers,
-        IEnumerable<T> rows,
+        IEnumerable<T> entities,
         CancellationToken ct = default)
     {
-        await using var importer = await connection.BeginBinaryImportAsync(copyCommand, ct);
-        foreach (var row in rows)
+        var importer = await connection.BeginBinaryImportAsync(copyCommand, ct);
+        Exception? operationFailure = null;
+        try
         {
-            await importer.StartRowAsync(ct);
-            for (var i = 0; i < writers.Count; i++)
-                await writers[i](importer, row, ct);
+            var rowCount = 0;
+            foreach (var row in entities)
+            {
+                if (row is null)
+                    throw new ArgumentException("The entities sequence contains a null element.", nameof(entities));
+                if (rowCount == int.MaxValue)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(entities),
+                        "A single PgYeet operation cannot insert more than Int32.MaxValue rows.");
+
+                await importer.StartRowAsync(ct);
+                for (var i = 0; i < writers.Count; i++)
+                    await writers[i](importer, row, ct);
+                rowCount++;
+            }
+
+            // PostgreSQL reports the rows actually inserted, which can be lower than the input count
+            // when a BEFORE INSERT trigger returns NULL. The input limit above makes the conversion safe.
+            return checked((int)await importer.CompleteAsync(ct));
         }
-        return await importer.CompleteAsync(ct);
+        catch (Exception exception)
+        {
+            operationFailure = exception;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                await importer.DisposeAsync();
+            }
+            catch (Exception disposeException) when (operationFailure is not null)
+            {
+                operationFailure.Data["PgYeet binary importer disposal failure"] = disposeException;
+            }
+        }
     }
 }
