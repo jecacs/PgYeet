@@ -14,7 +14,7 @@ PostgreSQL using Npgsql binary `COPY`. PgYeet reuses the mapping already defined
 `DbContext`—table, columns, store types, and value converters—and provides a direct streaming
 path plus optional identity/serial key write-back.
 
-> **Status: 1.0.0 — stable release.** The supported public API follows
+> **Status: preparing 1.0.0.** The supported public API follows
 > [Semantic Versioning](https://semver.org/): breaking API changes require a new major version.
 
 📖 **Start with the [usage guide](docs/USAGE.md)** for complete examples, transaction semantics,
@@ -32,6 +32,9 @@ the mapping support matrix, and operational caveats.
 
 ## Install
 
+The following commands target the planned 1.0.0 release. Before publication, use the locally packed
+artifact as described in [RELEASING](docs/RELEASING.md).
+
 ```bash
 dotnet add package PgYeet --version 1.0.0
 ```
@@ -40,17 +43,14 @@ dotnet add package PgYeet --version 1.0.0
 <PackageReference Include="PgYeet" Version="1.0.0" />
 ```
 
-PgYeet ships provider-aligned assets:
+PgYeet 1.0 targets .NET 10:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net8.0` | 8.x | 8.x |
 | `net10.0` | 10.x | 10.x |
 
-Keep EF Core and `Npgsql.EntityFrameworkCore.PostgreSQL` on the same major version as the selected
-target. Package dependency ranges prevent crossing into a different provider major. A .NET 9
-application can select PgYeet's `net8.0` asset with EF Core/Npgsql 8, but PgYeet does not support an
-EF Core 9 dependency graph.
+Use EF Core 10.0.12 or later in the 10.x line and Npgsql/provider 10.0.3 or later in the 10.x
+line. The package targets only `net10.0` and bounds dependencies below the next major version.
 PostgreSQL server-version support follows the matching Npgsql provider; the repository's integration
 suite currently runs against PostgreSQL 18.
 
@@ -123,7 +123,9 @@ Generated keys are written to CLR objects before an ambient transaction is commi
 later rolls that transaction back, the objects still retain those key values even though the rows no
 longer exist. Reset or reload them before reuse.
 
-If PgYeet owns the transaction and the operation itself fails after key assignment, it attempts to
+The generated-key path uses a savepoint inside a caller-owned transaction. On failure it attempts to
+roll back that operation while preserving earlier caller work. Staging tables are dropped before the
+call returns. If the operation itself fails after key assignment, PgYeet attempts to
 restore every original CLR key value before rethrowing. Any cleanup failures are attached to the
 original exception's data rather than replacing the database failure.
 
@@ -146,6 +148,7 @@ The 1.0 contract is intentionally explicit:
 | Computed columns | Omitted so PostgreSQL computes them |
 | Optional/default-backed shadow properties | Omitted |
 | Required shadow properties with no database value | Rejected |
+| Field-only properties; identity keys without CLR getter/setter | Rejected |
 | Owned or complex types | Rejected |
 | TPH/TPT inheritance, entity splitting, or table splitting | Rejected |
 | Store-generated UUID/default/HiLo keys | Rejected |

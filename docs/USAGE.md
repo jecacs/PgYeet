@@ -48,12 +48,10 @@ The package aligns its target framework with the EF Core and Npgsql provider maj
 
 | Target framework | EF Core | `Npgsql.EntityFrameworkCore.PostgreSQL` |
 | --- | --- | --- |
-| `net8.0` | 8.x | 8.x |
 | `net10.0` | 10.x | 10.x |
 
-Keep all EF Core packages and the Npgsql EF provider on one matching major line. PgYeet's package
-dependency ranges reject cross-major provider resolution. A .NET 9 application may consume the
-`net8.0` asset with EF Core/Npgsql 8; PgYeet does not support an EF Core 9 dependency graph.
+Use EF Core 10.0.12+ and Npgsql/provider 10.0.3+ within their 10.x lines. PgYeet targets only
+`net10.0`; its package dependency ranges reject cross-major provider resolution.
 
 PgYeet services a target/provider line only while that line's .NET, EF Core, and Npgsql upstreams
 remain supported. Plan framework upgrades before an upstream line reaches end of support. Removing a
@@ -134,14 +132,16 @@ Console.WriteLine(users[0].Id);
 When the model has a supported single-column integer identity/serial key and
 `returnGeneratedKeys` is `true`, PgYeet:
 
-1. materializes the input if it is not already an `IReadOnlyList<T>`;
+1. snapshots the input references into a private array while honoring cancellation;
 2. validates that every element is non-null and every object reference appears only once;
-3. starts or joins a transaction and validates the actual PostgreSQL backing sequence;
+3. starts a transaction or creates a savepoint in the caller's transaction, then validates the actual
+   PostgreSQL backing sequence;
 4. creates a temporary table inside that transaction;
 5. binary-copies the insertable values and an ordinal to that table;
 6. runs `INSERT … SELECT … RETURNING` against the target table;
 7. validates the number and CLR range of returned keys;
-8. snapshots the original CLR key values and assigns the generated values.
+8. drops the staging table, snapshots the original CLR key values, and assigns the generated values;
+9. commits its own transaction or releases its savepoint.
 
 A repeated object reference is rejected before the connection is opened. Otherwise two database rows
 would require PgYeet to assign two different keys to one object.
@@ -290,7 +290,11 @@ await transaction.CommitAsync(cancellationToken);
 ```
 
 The caller owns commit and rollback. Disposing the transaction without committing rolls back the
-database changes.
+database changes. The generated-key path creates a savepoint for each call. On failure it attempts to
+roll back to that savepoint and restore the original key values, preserving earlier caller work.
+Staging tables are dropped before a successful call returns, so long transactions do not accumulate
+one temporary table per call. The direct COPY path does not create a savepoint; after a PostgreSQL
+error on that path, the caller must roll back its transaction or its own savepoint.
 
 Generated keys are assigned to CLR objects before the caller commits. A later rollback does not undo
 those in-memory property assignments:
@@ -312,7 +316,7 @@ Reset or reload those objects before reusing them.
 - The direct path is one atomic PostgreSQL `COPY` statement. PgYeet does not create an application-level
   transaction around multiple calls.
 
-If an operation owned by PgYeet fails after CLR key assignment, PgYeet attempts to restore every original
+If a generated-key operation fails after CLR key assignment, PgYeet attempts to restore every original
 key value before rethrowing. A cleanup failure is attached to the original exception's `Data` so the
 database or cancellation error remains primary.
 
@@ -330,13 +334,15 @@ await db.Users.YeetAsync(
     ct: cancellationToken);
 ```
 
-The token is used while opening the connection, starting and writing COPY, executing the staged insert,
+An already-cancelled token is rejected before model access or input enumeration, including for empty
+input. Cancellation is also checked while buffering generated-key input. The token is used while opening the connection, starting and writing COPY, executing the staged insert,
 and reading generated keys. Cancellation normally surfaces as `OperationCanceledException` or an
 Npgsql-derived exception appropriate to the point of interruption.
 
 If PgYeet owns the generated-key transaction, cleanup and rollback are still attempted after cancellation
-with a non-cancelled cleanup token. If the transaction belongs to the caller, the caller remains
-responsible for rollback/disposal.
+with a non-cancelled cleanup token. The generated-key path also attempts to roll back its savepoint
+with a non-cancelled token inside a caller-owned transaction. If cleanup fails or the connection is
+lost, the caller must roll back/dispose the transaction and determine the database outcome.
 
 Cancellation is not an idempotency guarantee. If the client loses confirmation after PostgreSQL commits,
 the application must determine the outcome before retrying.
@@ -396,9 +402,14 @@ PostgreSQL can compute them. PgYeet 1.0 does not read computed values back.
 
 ### Shadow properties
 
-PgYeet cannot read a shadow value from a CLR object:
+PgYeet cannot read a shadow value from a CLR object. Field-only mappings are distinct from shadow
+properties: PgYeet rejects them instead of omitting their data, even when the column is nullable or
+has a default. Identity keys must be mapped to a CLR property with a getter and setter (private
+accessors are allowed); this guard applies to both insert paths.
 
-- nullable, default-backed, or database-generated shadow columns may be omitted;
+For non-key shadow properties:
+
+- nullable or default-backed shadow columns may be omitted;
 - a required shadow property with no database value is rejected before COPY.
 
 Map required data to a CLR property or configure the database to supply it.
@@ -418,6 +429,8 @@ Map required data to a CLR property or configure the database to supply it.
 | Computed columns | Supported by omission | Values are not read back |
 | Optional/default-backed shadow columns | Supported by omission | PostgreSQL supplies the value |
 | Required shadow column with no database value | Rejected | PgYeet cannot read it from the object |
+| Field-only property | Rejected | Map a readable CLR property; field values must not be silently omitted |
+| Identity key without CLR getter/setter | Rejected | Key write-back and restoration require both accessors |
 | TPH inheritance | Rejected | Discriminator mapping is outside the contract |
 | TPT or multiple table mappings | Rejected | One entity maps to one target table |
 | Owned types | Rejected | Their columns would otherwise be skipped |
@@ -466,8 +479,9 @@ assigning an obviously incomplete key set. An identity-rewriting `BEFORE INSERT`
 the returned count while breaking input-to-key correlation, so such triggers are unsupported. PgYeet
 cannot reliably detect arbitrary same-count key rewriting.
 
-When PgYeet owns the transaction, a detected mismatch is rolled back. Inside an ambient transaction,
-PgYeet throws and the caller must roll back.
+When PgYeet owns the transaction, a detected mismatch is rolled back. Inside a caller-owned
+transaction, PgYeet attempts to roll back its savepoint before throwing. Earlier caller work remains
+intact if that rollback succeeds.
 
 ## Permissions
 

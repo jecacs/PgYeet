@@ -74,3 +74,14 @@ strategy.
 PgYeet has not undergone an independent security audit. Reports involving an EF Core, Npgsql, or other
 transitive dependency are still welcome so the affected PgYeet versions can be evaluated and dependency
 updates coordinated.
+
+Release publishing uses [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)
+with OIDC. Build/test jobs have no publishing credentials. Separate checkout-free jobs attest both
+the package and symbols, preserve them in a draft GitHub Release, and publish those exact artifacts.
+The NuGet job verifies the signature on the downloaded package and its signed original-archive hash
+before the GitHub Release becomes public. Retry recovery never replaces a complete staged release.
+
+Solution dependencies and both ordinary and packed-consumer smoke graphs are locked. CI audits direct
+and transitive dependencies, rejects vulnerable packages at low severity or higher, and exercises the
+packed package against PostgreSQL before attestation. CodeQL and dependency review provide additional
+checks; these gates are not a substitute for an independent security audit.

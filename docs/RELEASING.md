@@ -7,7 +7,8 @@ This is the maintainer checklist for producing an immutable NuGet release. It co
 The canonical release path is a version tag consumed by the repository's trusted-publishing workflow.
 No long-lived NuGet API key belongs in the repository or a local script.
 
-The current release record is [PgYeet 1.0.0 — 2026-09-01](../CHANGELOG.md#100---2026-09-01).
+The [PgYeet 1.0.0 release notes](../CHANGELOG.md) are still being prepared. Set their actual release
+date and change the README status when creating the release commit.
 
 ## Version policy
 
@@ -57,11 +58,10 @@ Verify the package matrix:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net8.0` | 8.x | 8.x |
 | `net10.0` | 10.x | 10.x |
 
-Do not publish if either supported target silently resolves the other target's provider major. EF Core
-9 is not part of the supported matrix.
+The package must contain only the `net10.0` asset and its EF Core/Npgsql 10 dependency group.
+Do not publish if an older framework or a different provider major appears in the package.
 
 Before a major release, inspect the compiled public API and decide every exposed symbol intentionally.
 Before a patch or minor release, compare it with the previous stable package and resolve every package
@@ -92,8 +92,7 @@ Do not release from an unreviewed local-only commit.
 
 ## 4. Restore, format, build, and test
 
-Confirm the SDK selected by `global.json`, the runtimes needed by the tests and package-smoke matrix,
-and Docker:
+Confirm the SDK selected by `global.json`, the .NET 10 runtime, and Docker:
 
 ```bash
 dotnet --version
@@ -101,10 +100,8 @@ dotnet --list-runtimes
 docker version
 ```
 
-`global.json` pins SDK 10.0.400 with roll-forward disabled. The normal test project needs the .NET 8
-and .NET 10 runtimes; the exact-package smoke matrix in CI also runs on .NET 9. That `net9.0`
-application selects the `net8.0` package asset and EF Core/Npgsql 8 dependency line; it does not claim
-an EF Core 9 graph.
+`global.json` pins SDK 10.0.401 with roll-forward disabled, including runtime 10.0.12. The library,
+tests, benchmarks, and packed consumer all target `net10.0` with EF Core/Npgsql 10.
 
 Run the exact quality gates used by CI:
 
@@ -115,7 +112,7 @@ dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
 dotnet test PgYeet.Tests/PgYeet.Tests.csproj --no-build --configuration Release --verbosity normal
 ```
 
-The test run must exercise both target-framework/provider lines and start PostgreSQL successfully. A
+The test run must exercise the .NET 10 provider and start PostgreSQL successfully. A
 green compile without the Testcontainers integration suite is not a complete release gate.
 
 Investigate warnings; do not suppress a new warning merely to unblock publishing.
@@ -170,7 +167,6 @@ unzip -l artifacts/PgYeet.1.0.0.snupkg
 
 The main package must contain:
 
-- `lib/net8.0/PgYeet.dll` and `PgYeet.xml`;
 - `lib/net10.0/PgYeet.dll` and `PgYeet.xml`;
 - `README.nuget.md` at the package root;
 - `icon.png`;
@@ -179,7 +175,7 @@ The main package must contain:
 - dependencies aligned to the matching target-framework major;
 - version-specific release notes.
 
-The symbol package must contain portable PDBs with SourceLink information for both target frameworks.
+The symbol package must contain a portable PDB with SourceLink information for `net10.0`.
 
 Inspect generated metadata and the rendered README:
 
@@ -202,8 +198,21 @@ for each supported target and verify that:
 - XML documentation appears in the IDE/compiler tooling;
 - no project-only dependency is required at runtime.
 
-The smoke test may use a disposable local package source and PostgreSQL container. It must never use
-production credentials.
+Run the shared CI/pre-push smoke script; it restores into a fresh cache, checks the exact nupkg
+bytes, starts its own PostgreSQL container, and verifies inserts, generated keys, nullable values,
+and transaction rollback on .NET 10:
+
+```bash
+bash scripts/test-package.sh artifacts/PgYeet.1.0.0.nupkg
+```
+
+The script uses `packages.packed.lock.template.json` for the consumer's complete remote dependency
+graph. The smoke script uses `jq` to replace only the local PgYeet version and SHA-512 hash; restore
+then runs in locked mode. Dependency changes require updating both the ordinary smoke lock and the
+packed lock template deliberately. Do not disable locked mode to fix drift.
+
+The smoke database and cache are disposable and cleaned up by the script. No production credentials
+are needed.
 
 ## 9. Create and push the tag
 
@@ -227,16 +236,28 @@ Watch the complete release workflow:
 1. validate that the tag exactly matches the project version and its commit is contained in `main`;
 2. perform locked restore with NuGet audit, warning-free build, formatting check, and PostgreSQL tests;
 3. pack and validate one main package and one symbol package, then record both SHA-256 digests;
-4. restore the exact packed package and run its smoke application on .NET 8, 9, and 10;
-5. create and independently verify a GitHub build-provenance attestation for the main package;
-6. transfer only the attested artifacts into the privileged publishing job, which intentionally has no
-   source checkout and verifies the digests and attestation again;
-7. authenticate to NuGet with OIDC and push the exact package;
-8. create the GitHub Release automatically with the `.nupkg`, `.snupkg`, checksum files, and Sigstore
-   attestation bundle.
+4. restore the exact packed package and run its smoke application on .NET 10;
+5. create and independently verify a GitHub build-provenance attestation covering the package and symbols;
+6. stage the artifacts in a durable draft GitHub Release and download/verify them again; on rerun,
+   recover the already-staged bytes instead of adopting a newly packed candidate;
+7. transfer the canonical artifacts into the privileged publishing job, which has no source checkout
+   and verifies both digests and attestations again;
+8. authenticate to NuGet with OIDC and push the exact package, allowing duplicate-version responses
+   only because the subsequent signature check proves which bytes NuGet accepted;
+9. download the NuGet package, verify its signature, and compare the signed original-archive hash
+   with the staged package (NuGet repository signing changes the downloaded archive bytes);
+10. verify the staged release by exact release ID and compare every remote asset before making that
+    draft public. An already-public matching release is accepted on retry.
 
-A job that reached “push” but then failed may have published an immutable package. Check NuGet before
-rerunning anything.
+A job that reached “push” but then failed may have published an immutable package. Complete staged
+releases are recoverable by rerunning the workflow for the same tag. Never delete a complete staged
+release: it preserves the exact original bytes and attestation needed for recovery.
+
+The workflow stops on partial drafts, duplicate same-tag releases, unexpected ownership/metadata,
+failed attestations, or mismatched assets. It does not overwrite or delete them. If the initial upload
+was interrupted, inspect the reported release ID and verify that NuGet has no package for this version
+before deliberately removing only that incomplete draft and rerunning. If NuGet already has the version
+and there is no complete verified canonical release, investigate manually; do not stage replacement bytes.
 
 Never paste an OIDC token, temporary API key, or workflow output containing credentials into an issue,
 log excerpt, or chat.
@@ -248,7 +269,7 @@ After NuGet indexing completes, verify:
 - [the package page](https://www.nuget.org/packages/PgYeet) shows the intended version;
 - the dedicated NuGet README renders correctly;
 - title, description, icon, license, repository, tags, and release notes are correct;
-- both framework dependency groups are correct;
+- the .NET 10 dependency group is correct;
 - the symbol package was accepted;
 - source navigation resolves to the tagged commit;
 - `dotnet add package PgYeet --version 1.0.0` restores from nuget.org;

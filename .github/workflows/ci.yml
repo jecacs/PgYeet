@@ -23,12 +23,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up .NET 8, 9, and 10
+      - name: Set up .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
           dotnet-quality: ga
           global-json-file: global.json
 
@@ -57,9 +54,9 @@ jobs:
       - name: Verify formatting
         run: dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
 
-      # Testcontainers starts a real PostgreSQL container. Both target frameworks run from the
-      # same locked build, so provider behavior is exercised rather than mocked.
-      - name: Test against PostgreSQL
+      # Testcontainers starts a real PostgreSQL container. The .NET 10 provider runs from the
+      # locked build, so provider behavior is exercised rather than mocked.
+      - name: Test PostgreSQL and release recovery
         run: >-
           dotnet test PgYeet.Tests/PgYeet.Tests.csproj
           --no-build
@@ -106,13 +103,13 @@ jobs:
           grep -Fqx "${readme}" <<< "${package_entries}"
           grep -Fqx "${icon}" <<< "${package_entries}"
 
-          for framework in net8.0 net10.0; do
+          for framework in net10.0; do
             grep -Fqx "lib/${framework}/PgYeet.dll" <<< "${package_entries}"
             grep -Fqx "lib/${framework}/PgYeet.xml" <<< "${package_entries}"
             grep -Fqx "lib/${framework}/PgYeet.pdb" <<< "${symbol_entries}"
           done
-          if [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$' <<< "${package_entries}")" != 4 ]] ||
-             [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.pdb$' <<< "${symbol_entries}")" != 2 ]]; then
+          if [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$' <<< "${package_entries}")" != 2 ]] ||
+             [[ "$(grep -Ec '^lib/[^/]+/PgYeet\.pdb$' <<< "${symbol_entries}")" != 1 ]]; then
             echo "Package contains an unexpected PgYeet target-framework asset."
             exit 1
           fi
@@ -122,39 +119,11 @@ jobs:
           printf '%s  %s\n' "${package_sha256}" "${package_name}" > "${package_path}.sha256"
           printf '%s  %s\n' "${symbol_sha256}" "${symbol_name}" > "${symbol_path}.sha256"
 
-      - name: Run the exact packed package on .NET 8, 9, and 10
+      - name: Run the exact packed package on .NET 10
         shell: bash
-        env:
-          NUGET_PACKAGES: ${{ runner.temp }}/pgyeet-ci-packages
-          PGYEET_LOCAL_FEED: ${{ github.workspace }}/artifacts
         run: |
           package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
-          package_path="artifacts/PgYeet.${package_version}.nupkg"
-
-          dotnet restore samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
-            -p:UsePackedPgYeet=true \
-            -p:PgYeetPackageVersion="${package_version}" \
-            --configfile samples/PgYeet.PackageSmoke/NuGet.packed.config \
-            -p:NuGetAudit=true \
-            -p:NuGetAuditMode=all \
-            -warnaserror
-
-          restored_path="${NUGET_PACKAGES}/pgyeet/${package_version}/pgyeet.${package_version}.nupkg"
-          if [[ ! -f "${restored_path}" ]] || ! cmp --silent "${package_path}" "${restored_path}"; then
-            echo "The smoke project did not restore the exact package produced by this job."
-            exit 1
-          fi
-
-          for framework in net8.0 net9.0 net10.0; do
-            dotnet build samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
-              --framework "${framework}" \
-              --configuration Release \
-              --no-restore \
-              -p:UsePackedPgYeet=true \
-              -p:PgYeetPackageVersion="${package_version}" \
-              -warnaserror
-            dotnet "samples/PgYeet.PackageSmoke/bin/Release/${framework}/PgYeet.PackageSmoke.dll"
-          done
+          bash scripts/test-package.sh "artifacts/PgYeet.${package_version}.nupkg"
 
       - name: Upload package smoke artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

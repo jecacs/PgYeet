@@ -7,11 +7,16 @@ public API require a new major version.
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-09-01
+## [1.0.0] - Unreleased
 
 ### Added
 
-- A `net10.0` asset for EF Core 10 and Npgsql 10 alongside the `net8.0` asset for the matching 8.x line.
+- Durable draft-release staging and recovery of the exact attested package and symbols before NuGet
+  publishing; retries verify NuGet's signed original-package digest before completing the release.
+- Locked package-consumer dependency graphs and real PostgreSQL smoke tests on .NET 10.
+- Offline regression checks for release staging, recovery, tamper rejection, and publication.
+
+- A .NET 10-only package on SDK 10.0.401 / runtime 10.0.12, EF Core 10.0.12, and Npgsql/provider 10.0.3.
 - Dedicated GitHub, NuGet, usage, benchmark, contribution, release, conduct, changelog, and security
   documentation.
 - Complete package metadata, release notes, locked dependencies, source symbols, package-content
@@ -28,8 +33,8 @@ public API require a new major version.
   detail.
 - Replaced unqualified performance and competitor claims with reproducible methodology and a clearly
   labeled historical baseline.
-- Aligned Entity Framework Core and Npgsql dependencies by target-framework major version and bounded
-  each package dependency range before the next incompatible major.
+- Targeted `net10.0` exclusively and aligned EF Core/Npgsql dependencies to 10.x, bounding each
+  dependency range before the next incompatible major.
 - Made generated-key input validation reject null elements and repeated object references before
   database I/O.
 - Added fail-fast guards for store-generated composite keys, non-key identity columns, entities with no
@@ -38,6 +43,14 @@ public API require a new major version.
   has a positive increment, and is non-cyclic before COPY starts.
 
 ### Fixed
+
+- Generated-key failures inside caller-owned transactions now roll back their own savepoint, retaining
+  earlier work. Successful calls drop staging tables immediately instead of accumulating them until commit.
+- User columns named `__ord` no longer collide with the staging ordinal.
+- Field-only values can no longer be silently omitted; unreadable/unwritable identity keys and required
+  shadow properties without a database default fail before database I/O.
+- Generated-key input references are snapshotted even for mutable lists, with cancellation checks during
+  buffering. Already-cancelled operations stop before enumerating even empty inputs.
 
 - Failed PgYeet-owned transactions now attempt to restore the original CLR key values before rethrowing.
 - Cleanup failures are preserved on the primary exception instead of hiding the database or

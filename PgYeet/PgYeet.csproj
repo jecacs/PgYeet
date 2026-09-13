@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>true</IsPackable>
     <EnablePackageValidation>true</EnablePackageValidation>
@@ -16,11 +16,12 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.nuget.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
-    <PackageReleaseNotes>https://github.com/jecacs/PgYeet/blob/v1.0.0/CHANGELOG.md#100---2026-09-01</PackageReleaseNotes>
+    <PackageReleaseNotes>https://github.com/jecacs/PgYeet/blob/v1.0.0/CHANGELOG.md</PackageReleaseNotes>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/jecacs/PgYeet</RepositoryUrl>
     <PackageProjectUrl>https://github.com/jecacs/PgYeet</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
 
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
@@ -31,14 +32,8 @@
     <None Include="..\assets\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[8.0.30,9.0.0)" />
-    <PackageReference Include="Npgsql" Version="[8.0.9,9.0.0)" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="[8.0.11,9.0.0)" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[10.0.11,11.0.0)" />
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[10.0.12,11.0.0)" />
     <PackageReference Include="Npgsql" Version="[10.0.3,11.0.0)" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="[10.0.3,11.0.0)" />
   </ItemGroup>

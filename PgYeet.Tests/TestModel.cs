@@ -60,6 +60,12 @@ public sealed class BigOrder
     public string Reference { get; set; } = "";
 }
 
+public sealed class OrdinalRow
+{
+    public int Id { get; set; }
+    public string Value { get; set; } = "";
+}
+
 public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(options)
 {
     public DbSet<Person> People => Set<Person>();
@@ -69,9 +75,15 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
     public DbSet<CompositeItem> CompositeItems => Set<CompositeItem>();
     public DbSet<CompositeGuidItem> CompositeGuidItems => Set<CompositeGuidItem>();
     public DbSet<BigOrder> BigOrders => Set<BigOrder>();
+    public DbSet<OrdinalRow> OrdinalRows => Set<OrdinalRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<OrdinalRow>(e =>
+        {
+            e.ToTable("ordinal_rows");
+            e.Property(x => x.Value).HasColumnName("__ord");
+        });
         b.Entity<Person>(e =>
         {
             e.ToTable("people");

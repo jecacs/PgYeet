@@ -24,6 +24,11 @@ public static class PgYeetExtensions
     /// <see cref="DbContext.SaveChanges()"/>. It does not attach the supplied objects or change their
     /// <see cref="EntityState"/>. Do not add the same objects to the context before calling it.
     /// </para>
+    /// <para>
+    /// The generated-key path uses a savepoint inside an existing DbContext transaction. A failed
+    /// call attempts to roll back its own work and restore original key values. A later rollback
+    /// by the caller after a successful call does not restore the assigned CLR keys.
+    /// </para>
     /// </remarks>
     /// <typeparam name="T">The mapped entity CLR type.</typeparam>
     /// <param name="dbSet">The set whose EF Core mapping is used for the insert.</param>
@@ -50,6 +55,9 @@ public static class PgYeetExtensions
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The context does not use Npgsql, or the EF Core mapping/key strategy is unsupported.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="ct"/> is already cancelled or cancellation interrupts the operation.
     /// </exception>
     public static Task<int> YeetAsync<T>(
         this DbSet<T> dbSet,

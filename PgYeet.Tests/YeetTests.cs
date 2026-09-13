@@ -396,6 +396,92 @@ public sealed class YeetTests : IClassFixture<PostgresFixture>, IAsyncLifetime
         Assert.Equal(0, await db.BigOrders.AsNoTracking().CountAsync());
     }
 
+    [Fact]
+    public async Task User_column_named_ord_round_trips_with_generated_keys()
+    {
+        await using var db = NewContext();
+        var rows = new[] { new OrdinalRow { Value = "second" }, new OrdinalRow { Value = "first" } };
+        Assert.Equal(2, await db.OrdinalRows.YeetAsync(rows));
+
+        await using var reader = NewContext();
+        foreach (var row in rows)
+            Assert.Equal(row.Value, (await reader.OrdinalRows.AsNoTracking().SingleAsync(x => x.Id == row.Id)).Value);
+    }
+
+    [Fact]
+    public async Task Failed_write_back_rolls_back_only_its_savepoint()
+    {
+        await using var db = NewContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        await db.People.YeetAsync(MakePeople(1));
+        await db.Database.ExecuteSqlRawAsync("ALTER SEQUENCE \"big_orders_Id_seq\" RESTART WITH 2147483648;");
+
+        var order = new BigOrder { Reference = "overflow" };
+        await Assert.ThrowsAsync<OverflowException>(() => db.BigOrders.YeetAsync(new[] { order }));
+
+        Assert.Equal(0, order.Id.Value);
+        Assert.Equal(0, await db.BigOrders.CountAsync());
+        Assert.Equal(1, await db.People.CountAsync());
+        await transaction.CommitAsync();
+
+        await using var reader = NewContext();
+        Assert.Equal(0, await reader.BigOrders.CountAsync());
+        Assert.Equal(1, await reader.People.CountAsync());
+    }
+
+    [Fact]
+    public async Task Database_error_leaves_callers_transaction_usable()
+    {
+        await using var db = NewContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        await db.People.YeetAsync(MakePeople(1));
+        var invalid = MakePeople(1);
+        invalid[0].Name = new string('x', 201);
+
+        await Assert.ThrowsAsync<PostgresException>(() => db.People.YeetAsync(invalid));
+
+        Assert.Equal(0, invalid[0].Id);
+        Assert.Equal(1, await db.People.CountAsync());
+        await db.People.YeetAsync(MakePeople(1));
+        await transaction.CommitAsync();
+        await using var reader = NewContext();
+        Assert.Equal(2, await reader.People.CountAsync());
+    }
+
+    [Fact]
+    public async Task Staging_tables_do_not_accumulate_inside_callers_transaction()
+    {
+        await using var db = NewContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        for (var i = 0; i < 3; i++)
+            await db.People.YeetAsync(MakePeople(1));
+
+        var count = await db.Database.SqlQueryRaw<long>(
+            "SELECT count(*) AS \"Value\" FROM pg_class " +
+            "WHERE relnamespace = pg_my_temp_schema() AND starts_with(relname, '_pgyeet_')").SingleAsync();
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task Enumeration_failure_aborts_direct_copy_and_preserves_open_connection()
+    {
+        await using var db = NewContext();
+        await db.Database.OpenConnectionAsync();
+        var expected = new InvalidOperationException("Input failed.");
+        IEnumerable<Person> Rows()
+        {
+            yield return MakePeople(1)[0];
+            throw expected;
+        }
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => db.People.YeetAsync(Rows(), returnGeneratedKeys: false));
+        Assert.Same(expected, actual);
+        Assert.Equal(System.Data.ConnectionState.Open, db.Database.GetDbConnection().State);
+        Assert.Equal(0, await db.People.CountAsync());
+        Assert.Equal(1, await db.People.YeetAsync(MakePeople(1)));
+    }
+
     private static Person[] MakePeople(int n) =>
         Enumerable.Range(0, n).Select(i => new Person
         {

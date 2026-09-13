@@ -59,45 +59,19 @@ printf '%s\n' "${nuspec}" | grep -Fq '<license type="expression">MIT</license>'
 printf '%s\n' "${package_entries}" | grep -Fqx README.nuget.md
 printf '%s\n' "${package_entries}" | grep -Fqx icon.png
 
-for framework in net8.0 net10.0; do
+for framework in net10.0; do
   printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.dll"
   printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.xml"
   printf '%s\n' "${symbol_entries}" | grep -Fqx "lib/${framework}/PgYeet.pdb"
 done
-if [ "$(printf '%s\n' "${package_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$')" -ne 4 ] ||
-   [ "$(printf '%s\n' "${symbol_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.pdb$')" -ne 2 ]; then
+if [ "$(printf '%s\n' "${package_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.(dll|xml)$')" -ne 2 ] ||
+   [ "$(printf '%s\n' "${symbol_entries}" | grep -Ec '^lib/[^/]+/PgYeet\.pdb$')" -ne 1 ]; then
   echo "Package contains an unexpected PgYeet target-framework asset."
   exit 1
 fi
 
 if [ "${PGYEET_PREPUSH_SKIP_TESTS:-0}" != "1" ]; then
-  packed_packages="${package_dir}/packages"
-  PGYEET_LOCAL_FEED="${package_dir}" NUGET_PACKAGES="${packed_packages}" dotnet restore \
-    samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
-    -p:UsePackedPgYeet=true \
-    -p:PgYeetPackageVersion="${package_version}" \
-    --configfile samples/PgYeet.PackageSmoke/NuGet.packed.config \
-    -p:NuGetAudit=true \
-    -p:NuGetAuditMode=all \
-    -warnaserror
-
-  restored_path="${packed_packages}/pgyeet/${package_version}/pgyeet.${package_version}.nupkg"
-  if [ ! -f "${restored_path}" ] || ! cmp -s "${package_path}" "${restored_path}"; then
-    echo "The smoke project did not restore the exact package produced by this hook."
-    exit 1
-  fi
-
-  for framework in net8.0 net9.0 net10.0; do
-    NUGET_PACKAGES="${packed_packages}" dotnet build \
-      samples/PgYeet.PackageSmoke/PgYeet.PackageSmoke.csproj \
-      --framework "${framework}" \
-      --configuration Release \
-      --no-restore \
-      -p:UsePackedPgYeet=true \
-      -p:PgYeetPackageVersion="${package_version}" \
-      -warnaserror
-    dotnet "samples/PgYeet.PackageSmoke/bin/Release/${framework}/PgYeet.PackageSmoke.dll"
-  done
+  bash scripts/test-package.sh "${package_path}"
 fi
 
 echo "PgYeet pre-push checks passed."

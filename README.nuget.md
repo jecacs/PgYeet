@@ -14,16 +14,14 @@ dotnet add package PgYeet --version 1.0.0
 <PackageReference Include="PgYeet" Version="1.0.0" />
 ```
 
-PgYeet ships two provider-aligned assets:
+PgYeet 1.0 targets .NET 10:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net8.0` | 8.x | 8.x |
 | `net10.0` | 10.x | 10.x |
 
-Keep EF Core and `Npgsql.EntityFrameworkCore.PostgreSQL` on the same major version as the selected
-target. Package dependency ranges prevent crossing provider majors. A .NET 9 application may select
-the `net8.0` asset with EF Core/Npgsql 8; EF Core 9 is not part of the supported package matrix.
+Requires EF Core 10.0.12+ and Npgsql/provider 10.0.3+ within their 10.x lines. The package
+targets only `net10.0` and bounds dependencies below the next major version.
 
 ## Quick start
 
@@ -71,7 +69,8 @@ non-cyclic.
 
 An existing `DbContext` transaction is honored. Without one, the generated-key path owns a transaction
 and the direct path is a single atomic PostgreSQL statement. If an ambient transaction is rolled back
-after key assignment, the CLR objects still retain those values.
+after a successful call, the CLR objects still retain those values. A failed generated-key call rolls
+back to its own savepoint inside the caller's transaction and attempts to restore the original keys.
 
 ## Supported scope
 
@@ -88,7 +87,7 @@ Computed columns are omitted. CLR-backed properties with database defaults are n
 writes the current property value, so EF Core's `SaveChanges` sentinel behavior does not apply.
 
 Owned and complex types, inheritance/table splitting, required shadow properties without a database
-value, composite generated keys, descending/cyclic identities, non-key identity columns, and
+value, field-only properties, identity keys without a CLR getter/setter, composite generated keys, descending/cyclic identities, non-key identity columns, and
 non-identity store-generated keys are outside the 1.0 contract.
 Identity-rewriting `BEFORE INSERT` triggers are also unsupported because returned keys cannot be
 correlated safely with the input objects.

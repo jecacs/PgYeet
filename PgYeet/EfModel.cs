@@ -68,13 +68,16 @@ internal static class EfModel
 
             if (property.PropertyInfo is not { } propertyInfo)
             {
+                if (!property.IsShadowProperty())
+                    throw new NotSupportedException(
+                        $"PgYeet: '{typeof(T).Name}.{property.Name}' is a field-only property. " +
+                        "Map it to a readable CLR property so its value can be copied.");
                 // Shadow property: no CLR member to read the value from. Omitting the column is
                 // only safe when the database can fill it on its own — otherwise fail fast here
                 // instead of a cryptic not-null violation (typical culprits: required shadow FKs).
                 if (!property.IsColumnNullable(store)
                     && property.GetDefaultValueSql() is null
-                    && !property.TryGetDefaultValue(out _)
-                    && property.ValueGenerated == ValueGenerated.Never)
+                    && !property.TryGetDefaultValue(out _))
                     throw new NotSupportedException(
                         $"PgYeet: '{typeof(T).Name}.{property.Name}' is a required shadow property with no " +
                         "database default — PgYeet cannot supply a value for it. " +
@@ -97,6 +100,10 @@ internal static class EfModel
         EfIdentity<T>? identity = null;
         if (identityProperty?.PropertyInfo is { } idInfo)
         {
+            if (idInfo.GetMethod is null || idInfo.SetMethod is null)
+                throw new NotSupportedException(
+                    $"PgYeet: identity property '{typeof(T).Name}.{identityProperty.Name}' must have " +
+                    "a CLR getter and setter for generated-key write-back.");
             var (validate, assign) = BuildIdAssigner<T>(identityProperty, idInfo);
             identity = new EfIdentity<T>(
                 identityProperty.GetColumnName(store)!,
@@ -104,6 +111,12 @@ internal static class EfModel
                 assign,
                 idInfo.GetValue,
                 idInfo.SetValue);
+        }
+        else if (identityProperty is not null)
+        {
+            throw new NotSupportedException(
+                $"PgYeet: identity property '{typeof(T).Name}.{identityProperty.Name}' must be mapped " +
+                "to a CLR property with a getter and setter for generated-key write-back.");
         }
 
         return new EfTableInfo<T>(

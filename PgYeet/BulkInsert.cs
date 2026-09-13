@@ -31,6 +31,7 @@ internal static class BulkInsert
         bool returnGeneratedKeys,
         CancellationToken ct) where T : class
     {
+        ct.ThrowIfCancellationRequested();
         if (rows.TryGetNonEnumeratedCount(out var knownCount) && knownCount == 0)
             return 0;
 
@@ -38,10 +39,9 @@ internal static class BulkInsert
         IReadOnlyList<T>? stagedRows = null;
         if (info.Identity is not null && returnGeneratedKeys)
         {
-            stagedRows = rows as IReadOnlyList<T> ?? rows.ToArray();
+            stagedRows = BufferGeneratedKeyInput(rows, ct);
             if (stagedRows.Count == 0)
                 return 0;
-            GuardGeneratedKeyInput(stagedRows);
         }
 
         if (context.Database.GetDbConnection() is not NpgsqlConnection connection)
@@ -106,6 +106,7 @@ internal static class BulkInsert
         var cols = info.InsertColumns;
         var identity = info.Identity!;
         var temp = $"_pgyeet_{Guid.NewGuid():N}";
+        var ordinal = EfModel.QuoteIdent($"{temp}_ord");
         var columnList = string.Join(", ", cols.Select(c => EfModel.QuoteIdent(c.Name)));
 
         var ambient = context.Database.CurrentTransaction;
@@ -117,17 +118,23 @@ internal static class BulkInsert
                   "(is the connection wrapped by a profiler or interceptor?).");
         object?[]? originalKeys = null;
         Exception? operationFailure = null;
+        var savepointCreated = false;
         try
         {
+            if (ambient is not null)
+            {
+                await transaction.SaveAsync(temp, ct);
+                savepointCreated = true;
+            }
             await GuardIdentitySequenceAsync(connection, transaction, info, ct);
 
             var ddl = string.Join(", ", cols.Select(c => $"{EfModel.QuoteIdent(c.Name)} {c.StoreType}"));
-            await using (var cmd = new NpgsqlCommand($"CREATE TEMP TABLE {EfModel.QuoteIdent(temp)} ({ddl}, \"__ord\" bigint) ON COMMIT DROP;", connection, transaction))
+            await using (var cmd = new NpgsqlCommand($"CREATE TEMP TABLE {EfModel.QuoteIdent(temp)} ({ddl}, {ordinal} bigint) ON COMMIT DROP;", connection, transaction))
             {
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            var copy = $"COPY {EfModel.QuoteIdent(temp)} ({columnList}, \"__ord\") FROM STDIN (FORMAT BINARY)";
+            var copy = $"COPY {EfModel.QuoteIdent(temp)} ({columnList}, {ordinal}) FROM STDIN (FORMAT BINARY)";
             LogStagedCopyStarting(logger, rows.Count, copy, null);
             var importer = await connection.BeginBinaryImportAsync(copy, ct);
             Exception? copyFailure = null;
@@ -162,10 +169,10 @@ internal static class BulkInsert
 
             var insert =
                 $"INSERT INTO {info.QuotedTable} ({columnList}) " +
-                $"SELECT {columnList} FROM {EfModel.QuoteIdent(temp)} ORDER BY \"__ord\" " +
+                $"SELECT {columnList} FROM {EfModel.QuoteIdent(temp)} ORDER BY {ordinal} " +
                 $"RETURNING {EfModel.QuoteIdent(identity.Column)};";
 
-            // Identity values are assigned in insertion order (__ord), so sorting the returned keys
+            // Identity values are assigned in insertion order, so sorting the returned keys
             // ascending re-aligns them with the entities even if RETURNING comes back unordered.
             // The catalog preflight above proves that the actual backing sequence is positive and
             // non-cyclic. Identity-rewriting BEFORE INSERT triggers remain unsupported.
@@ -192,6 +199,11 @@ internal static class BulkInsert
             for (var i = 0; i < rows.Count; i++)
                 identity.ValidateReserved(ids[i]);
 
+            await using (var cmd = new NpgsqlCommand($"DROP TABLE {EfModel.QuoteIdent(temp)};", connection, transaction))
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
             var keySnapshot = new object?[rows.Count];
             for (var i = 0; i < rows.Count; i++)
                 keySnapshot[i] = identity.ReadCurrent(rows[i]);
@@ -201,6 +213,7 @@ internal static class BulkInsert
                 identity.AssignReserved(rows[i], ids[i]);
 
             if (ambient is null) await transaction.CommitAsync(ct);
+            else await transaction.ReleaseAsync(temp, ct);
             return rows.Count;
         }
         catch (Exception operationException)
@@ -212,6 +225,18 @@ internal static class BulkInsert
                 try
                 {
                     await transaction.RollbackAsync(CancellationToken.None); // ct may already be cancelled
+                }
+                catch (Exception ex)
+                {
+                    (cleanupFailures ??= []).Add(ex);
+                }
+            }
+            else if (savepointCreated)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(temp, CancellationToken.None);
+                    await transaction.ReleaseAsync(temp, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -291,11 +316,13 @@ internal static class BulkInsert
                 "cyclic sequence. Generated-key write-back does not support sequence wraparound.");
     }
 
-    private static void GuardGeneratedKeyInput<T>(IReadOnlyList<T> entities) where T : class
+    private static T[] BufferGeneratedKeyInput<T>(IEnumerable<T> entities, CancellationToken ct) where T : class
     {
         var unique = new HashSet<T>(ReferenceEqualityComparer.Instance);
+        var buffered = new List<T>();
         foreach (var row in entities)
         {
+            ct.ThrowIfCancellationRequested();
             if (row is null)
                 throw new ArgumentException("The entities sequence contains a null element.", nameof(entities));
 
@@ -305,6 +332,8 @@ internal static class BulkInsert
                     "Generated keys cannot be written back unambiguously; use distinct objects or set " +
                     "returnGeneratedKeys to false.",
                     nameof(entities));
+            buffered.Add(row);
         }
+        return buffered.ToArray();
     }
 }

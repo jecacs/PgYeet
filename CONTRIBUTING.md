@@ -18,10 +18,10 @@ Small fixes, tests, and documentation corrections can go directly to a pull requ
 
 ## Development prerequisites
 
-- .NET SDK 10.0.400, pinned by `global.json` with roll-forward disabled.
-- The .NET 8 runtime (the .NET 10 SDK supplies the .NET 10 runtime).
+- .NET SDK 10.0.401, pinned by `global.json` with roll-forward disabled.
 - Docker for the PostgreSQL integration tests.
 - Git.
+- Bash and `jq` for the release workflow tests; OpenSSL for the packed consumer smoke.
 
 Check the selected SDK and installed runtimes:
 
@@ -56,17 +56,20 @@ dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
 dotnet test PgYeet.Tests/PgYeet.Tests.csproj --no-build --configuration Release --verbosity normal
 ```
 
-The library multi-targets `net8.0` and `net10.0`. A normal solution build must compile both provider
-lines: EF Core/Npgsql 8 for `net8.0` and EF Core/Npgsql 10 for `net10.0`.
+The library, tests, benchmarks, and package consumer target `net10.0` with EF Core/Npgsql 10.
+The SDK is pinned to the current .NET 10 servicing release; update it and dependency locks together.
 
 Docker must be running for the integration suite. Tests use throwaway containers, but they still require
 enough local resources to pull and start PostgreSQL.
 
 These are the repository's CI quality gates. Locked restore and NuGet audit failures are release
 blockers; do not regenerate a lock file or suppress an advisory without reviewing the dependency
-change. The package smoke test in CI additionally consumes the exact packed `.nupkg` from `net8.0`,
-`net9.0`, and `net10.0` applications. The `net9.0` application selects the `net8.0` package asset and
-its supported EF Core/Npgsql 8 dependency line; it does not add EF Core 9 to the supported matrix.
+change. The package smoke test in CI additionally consumes the exact packed `.nupkg` from a
+`net10.0` application, with its own locked dependency graph and real PostgreSQL inserts/rollback.
+Run it locally with `bash scripts/test-package.sh artifacts/PgYeet.1.0.0.nupkg` after packing.
+
+`ReleaseWorkflowTests` exercises staging and retry recovery with local command fixtures as part of
+the normal xUnit run. It executes the release workflow's Bash steps without contacting GitHub or NuGet.
 
 ## Design and code guidelines
 
@@ -94,7 +97,7 @@ verified against real PostgreSQL, not an in-memory provider.
 Depending on the change, cover:
 
 - the generated-key and direct paths;
-- both `net8.0` and `net10.0` provider lines;
+- the `net10.0` / EF Core 10 / Npgsql 10 provider line;
 - success and rollback inside an ambient transaction;
 - persistence observed from a fresh context or raw SQL;
 - empty and lazy inputs;

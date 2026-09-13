@@ -31,7 +31,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var db = new TestDbContext(Options);
         await db.Database.ExecuteSqlRawAsync(
-            "TRUNCATE TABLE people, orders, big_orders RESTART IDENTITY; " +
+            "TRUNCATE TABLE people, orders, big_orders, ordinal_rows RESTART IDENTITY; " +
             "TRUNCATE TABLE items, gadgets, composite_items, composite_guid_items;");
     }
 
