@@ -8,6 +8,7 @@ artifacts/
 
 # BenchmarkDotNet
 BenchmarkDotNet.Artifacts/
+/Bench/.bdn/
 
 # IDEs
 .vs/

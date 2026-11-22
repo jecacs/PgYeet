@@ -16,23 +16,18 @@ objects themselves.
 
 ## Harness
 
-The benchmark project compares five operations:
+The current benchmark project compares three operations:
 
 | Benchmark method | Meaning |
 | --- | --- |
 | `EfCore_AddRange` | EF Core `AddRange` followed by `SaveChangesAsync` |
 | `PgYeet_Copy` | PgYeet generated-key path |
 | `PgYeet_Copy_NoIds` | PgYeet direct path with `returnGeneratedKeys: false` |
-| `BulkExtensions_Insert` | EFCore.BulkExtensions direct insert |
-| `BulkExtensions_Insert_OutputId` | EFCore.BulkExtensions with identity output |
 
-The fair path-to-path comparisons are:
-
-- `PgYeet_Copy_NoIds` versus `BulkExtensions_Insert`;
-- `PgYeet_Copy` versus `BulkExtensions_Insert_OutputId`.
-
-Comparing a no-key operation to an identity-output operation answers a different question and must be
-labeled accordingly.
+Interpret generated-key write-back and direct COPY separately because they perform different work.
+EFCore.BulkExtensions.PostgreSql `10.0.1` fails with `MissingMethodException` against EF Core 11,
+so its two comparator methods are excluded from the current harness. Both remain in the historical
+.NET 8 comparison below.
 
 The entity used by the harness has an integer identity primary key and four scalar columns:
 
@@ -56,15 +51,20 @@ The harness uses:
 - `MemoryDiagnoser`;
 - a table truncation and identity reset before every iteration.
 
-The current harness targets `net10.0` and references the repository's current PgYeet project plus the
+The current harness targets `net11.0` and references the repository's current PgYeet project plus the
 dependency versions declared in [`Bench/Bench.csproj`](../Bench/Bench.csproj). Inspect that project
 before every run and record the resolved package graph. A new result from this harness is not directly
 comparable with the older `net8.0` baseline below unless the runtime and dependency change is labeled.
+No benchmark result for the .NET 11 / PgYeet 2.0 line has been recorded here yet.
+
+The harness uses BenchmarkDotNet `0.16.0-preview.2` for .NET 11 support because `0.15.8` cannot run
+`net11.0` benchmarks. This preview dependency is used only by `Bench`. Benchmark jobs continue to
+use normal out-of-process execution.
 
 ## Historical baseline
 
 The following is a **historical development run recorded on 2026-06-14**. It predates PgYeet 0.2 and
-1.0, so it is not a fresh PgYeet 1.0 result and must not be presented as one. It is retained to document
+1.0, so it is not a fresh PgYeet 2.0 result and must not be presented as one. It is retained to document
 the original performance direction and to make old README claims auditable.
 
 Recorded environment:
@@ -108,7 +108,7 @@ Raw BenchmarkDotNet values:
 | BulkExtensions + generated keys | 100,000 | 1,178.520 ms | 17.0274 ms | 600,180.53 KB |
 
 These numbers show that the prototype avoided substantial EF change-tracker allocation in this narrow
-workload. They do not prove the same ratio for another schema or the 1.0 package. In particular:
+workload. They do not prove the same ratio for another schema or the 2.0 package. In particular:
 
 - generated-key write-back and direct COPY have different costs;
 - several standard deviations were large enough that rounded point estimates should not be overread;
@@ -125,6 +125,11 @@ From the repository root:
 docker compose up -d
 dotnet run --configuration Release --project Bench
 ```
+
+These commands run the current three-case .NET 11 harness. To reproduce the historical comparison,
+use the [referenced source commit](https://github.com/jecacs/PgYeet/commit/9dac81a955328a9199e5dca85e17d068702f71fc)
+and the exact SDK, runtime, and package stack recorded in the historical environment table. That
+stack includes EFCore.BulkExtensions.PostgreSql `8.1.3` and both of its comparator methods.
 
 The Docker Compose service and benchmark connection string are intended only for local development.
 

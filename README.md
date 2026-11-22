@@ -14,8 +14,9 @@ PostgreSQL using Npgsql binary `COPY`. PgYeet reuses the mapping already defined
 `DbContext`—table, columns, store types, and value converters—and provides a direct streaming
 path plus optional identity/serial key write-back.
 
-> **Status: preparing 1.0.0.** The supported public API follows
-> [Semantic Versioning](https://semver.org/): breaking API changes require a new major version.
+> **PgYeet 2.0 targets .NET 11 and EF Core/Npgsql 11.**
+> The supported public API follows [Semantic Versioning](https://semver.org/): breaking compatibility
+> changes require a new major version.
 
 📖 **Start with the [usage guide](docs/USAGE.md)** for complete examples, transaction semantics,
 the mapping support matrix, and operational caveats.
@@ -32,25 +33,23 @@ the mapping support matrix, and operational caveats.
 
 ## Install
 
-The following commands target the planned 1.0.0 release. Before publication, use the locally packed
-artifact as described in [RELEASING](docs/RELEASING.md).
-
 ```bash
-dotnet add package PgYeet --version 1.0.0
+dotnet add package PgYeet --version 2.0.0
 ```
 
 ```xml
-<PackageReference Include="PgYeet" Version="1.0.0" />
+<PackageReference Include="PgYeet" Version="2.0.0" />
 ```
 
-PgYeet 1.0 targets .NET 10:
+PgYeet 2.0 targets .NET 11:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net10.0` | 10.x | 10.x |
+| `net11.0` | 11.x | 11.x |
 
-Use EF Core 10.0.12 or later in the 10.x line and Npgsql/provider 10.0.3 or later in the 10.x
-line. The package targets only `net10.0` and bounds dependencies below the next major version.
+Use EF Core 11.0.0 or later in the 11.x line and Npgsql/provider 11.0.0 or later in the 11.x
+line. The package targets only `net11.0` and bounds each dependency to `[11.0.0,12.0.0)`.
+Upgrading from PgYeet 1.x requires moving the consuming application to .NET 11 and these provider majors.
 PostgreSQL server-version support follows the matching Npgsql provider; the repository's integration
 suite currently runs against PostgreSQL 18.
 
@@ -134,9 +133,9 @@ retrying a non-idempotent insert can create duplicates.
 
 ## Supported mappings
 
-The 1.0 contract is intentionally explicit:
+The 2.0 contract is intentionally explicit:
 
-| Mapping | 1.0 support |
+| Mapping | 2.0 support |
 | --- | --- |
 | One entity mapped to one PostgreSQL table | Yes |
 | Scalar CLR-backed properties | Yes |

@@ -1,6 +1,5 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
-using EFCore.BulkExtensions;
 using Microsoft.EntityFrameworkCore;
 using PgYeet;
 
@@ -74,19 +73,5 @@ public class InsertBenchmark
     public async Task PgYeet_Copy_NoIds()
     {
         await _db.Users.YeetAsync(_users, returnGeneratedKeys: false);
-    }
-
-    [Benchmark]
-    public Task BulkExtensions_Insert()
-    {
-        // default config: straight COPY, no key write-back (compare to PgYeet_Copy_NoIds)
-        return _db.BulkInsertAsync(_users);
-    }
-
-    [Benchmark]
-    public Task BulkExtensions_Insert_OutputId()
-    {
-        // SetOutputIdentity: temp table + RETURNING, keys written back (compare to PgYeet_Copy)
-        return _db.BulkInsertAsync(_users, new BulkConfig { SetOutputIdentity = true });
     }
 }

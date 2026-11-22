@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up .NET 10
+      - name: Set up .NET 11
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-quality: ga
@@ -128,7 +128,7 @@ jobs:
           grep -Fqx "${readme}" <<< "${package_entries}"
           grep -Fqx "${icon}" <<< "${package_entries}"
 
-          for framework in net10.0; do
+          for framework in net11.0; do
             grep -Fqx "lib/${framework}/PgYeet.dll" <<< "${package_entries}"
             grep -Fqx "lib/${framework}/PgYeet.xml" <<< "${package_entries}"
             grep -Fqx "lib/${framework}/PgYeet.pdb" <<< "${symbol_entries}"
@@ -150,7 +150,7 @@ jobs:
           echo "package_sha256=${package_sha256}" >> "${GITHUB_OUTPUT}"
           echo "symbol_sha256=${symbol_sha256}" >> "${GITHUB_OUTPUT}"
 
-      - name: Run the exact packed package on .NET 10
+      - name: Run the exact packed package on .NET 11
         shell: bash
         run: |
           package_version="$(dotnet msbuild PgYeet/PgYeet.csproj -getProperty:Version -nologo)"
@@ -249,7 +249,7 @@ jobs:
           name: attested-release-candidate
           path: candidate
 
-      # SDK 10 packs may differ byte-for-byte on a rerun. A complete release is authoritative;
+      # SDK 11 packs may differ byte-for-byte on a rerun. A complete release is authoritative;
       # never replace its assets with the freshly built candidate, even when still a draft.
       - name: Stage or recover exact release assets
         id: stage

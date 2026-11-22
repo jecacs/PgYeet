@@ -8,6 +8,10 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
+[*.cs]
+resharper_csharp_object_creation_when_type_evident = target_typed
+resharper_csharp_modifiers_order = public private protected internal file static extern new virtual abstract sealed override readonly unsafe required volatile async closed
+
 [*.{csproj,props,targets,xml,json,yml,yaml}]
 indent_size = 2
 
