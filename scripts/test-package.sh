@@ -45,7 +45,7 @@ for attempt in {1..60}; do
 done
 port="$(docker port "${container_id}" 5432/tcp)"
 export PGYEET_SMOKE_CONNECTION_STRING="Host=127.0.0.1;Port=${port##*:};Database=pgyeet_smoke;Username=postgres;Password=pgyeet-smoke"
-for framework in net10.0; do
+for framework in net11.0; do
   dotnet build "${smoke_project}" --framework "${framework}" -c Release --no-restore \
     -p:UsePackedPgYeet=true -p:PgYeetPackageVersion="${package_version}" \
     -p:NuGetLockFilePath="${lock_path}" -warnaserror

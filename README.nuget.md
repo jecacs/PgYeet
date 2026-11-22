@@ -7,21 +7,22 @@ duplicate mapping and no bulk-specific attributes.
 ## Install
 
 ```bash
-dotnet add package PgYeet --version 1.0.0
+dotnet add package PgYeet --version 2.0.0
 ```
 
 ```xml
-<PackageReference Include="PgYeet" Version="1.0.0" />
+<PackageReference Include="PgYeet" Version="2.0.0" />
 ```
 
-PgYeet 1.0 targets .NET 10:
+PgYeet 2.0 targets .NET 11:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net10.0` | 10.x | 10.x |
+| `net11.0` | 11.x | 11.x |
 
-Requires EF Core 10.0.12+ and Npgsql/provider 10.0.3+ within their 10.x lines. The package
-targets only `net10.0` and bounds dependencies below the next major version.
+Requires EF Core 11.0.0+ and Npgsql/provider 11.0.0+ within their 11.x lines. The package
+targets only `net11.0` and bounds each dependency to `[11.0.0,12.0.0)`. Consumers upgrading from
+PgYeet 1.x must move to .NET 11 and these provider majors.
 
 ## Quick start
 
@@ -88,7 +89,7 @@ writes the current property value, so EF Core's `SaveChanges` sentinel behavior 
 
 Owned and complex types, inheritance/table splitting, required shadow properties without a database
 value, field-only properties, identity keys without a CLR getter/setter, composite generated keys, descending/cyclic identities, non-key identity columns, and
-non-identity store-generated keys are outside the 1.0 contract.
+non-identity store-generated keys are outside the 2.0 contract.
 Identity-rewriting `BEFORE INSERT` triggers are also unsupported because returned keys cannot be
 correlated safely with the input objects.
 PostgreSQL rejects direct `COPY FROM` into an RLS-enabled target for an ordinary non-bypass role. The

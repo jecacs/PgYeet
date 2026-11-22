@@ -4,15 +4,17 @@
 
 | Version | Security fixes |
 | --- | --- |
+| 2.x | Yes |
 | 1.x | Yes |
 | < 1.0 | No |
 
-Security fixes are released for the latest stable 1.x version. Before reporting an issue, update to
-the latest patch release when practical and check the [changelog](CHANGELOG.md).
+Security fixes are released for the latest stable version in each supported major line. Before
+reporting an issue, update to the latest patch release when practical and check the
+[changelog](CHANGELOG.md).
 
 Each target-framework/provider line receives PgYeet security fixes only while its corresponding .NET,
 EF Core, and Npgsql upstream line remains supported. Consumers on an upstream end-of-life line must
-upgrade to a supported line to receive further fixes. Removing a target framework from PgYeet 1.x is a
+upgrade to a supported line to receive further fixes. Removing a target framework from PgYeet is a
 documented compatibility change and, under the current policy, requires a new major PgYeet version.
 
 ## Reporting a vulnerability

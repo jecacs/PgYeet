@@ -1,6 +1,6 @@
 # PgYeet — Usage Guide
 
-This guide is the normative description of PgYeet 1.0 behavior. For the project overview, see the
+This guide is the normative description of PgYeet 2.0 behavior. For the project overview, see the
 [README](../README.md). For measured performance and reproduction rules, see
 [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -37,25 +37,26 @@ Task<int> YeetAsync<T>(
 ## Installation and compatibility
 
 ```bash
-dotnet add package PgYeet --version 1.0.0
+dotnet add package PgYeet --version 2.0.0
 ```
 
 ```xml
-<PackageReference Include="PgYeet" Version="1.0.0" />
+<PackageReference Include="PgYeet" Version="2.0.0" />
 ```
 
 The package aligns its target framework with the EF Core and Npgsql provider major:
 
 | Target framework | EF Core | `Npgsql.EntityFrameworkCore.PostgreSQL` |
 | --- | --- | --- |
-| `net10.0` | 10.x | 10.x |
+| `net11.0` | 11.x | 11.x |
 
-Use EF Core 10.0.12+ and Npgsql/provider 10.0.3+ within their 10.x lines. PgYeet targets only
-`net10.0`; its package dependency ranges reject cross-major provider resolution.
+Use EF Core 11.0.0+ and Npgsql/provider 11.0.0+ within their 11.x lines. PgYeet targets only
+`net11.0`; each dependency range is `[11.0.0,12.0.0)` and rejects cross-major provider resolution.
+Upgrading from PgYeet 1.x requires moving the consuming application to .NET 11 and these provider majors.
 
 PgYeet services a target/provider line only while that line's .NET, EF Core, and Npgsql upstreams
 remain supported. Plan framework upgrades before an upstream line reaches end of support. Removing a
-target framework is a documented compatibility change and, under the current 1.x policy, requires a
+target framework is a documented compatibility change and, under the semantic versioning policy, requires a
 new major PgYeet version.
 
 PostgreSQL server-version support follows the matching Npgsql provider. The repository's integration
@@ -186,7 +187,7 @@ var inserted = await db.Users.YeetAsync(
 ```
 
 The sequence must be synchronous `IEnumerable<T>`. PgYeet does not accept `IAsyncEnumerable<T>` in
-1.0. Each yielded entity must be non-null and valid for the mapped PostgreSQL columns. The public
+2.0. Each yielded entity must be non-null and valid for the mapped PostgreSQL columns. The public
 result is `Int32`. If a lazy direct stream attempts to yield more than `Int32.MaxValue` rows, PgYeet
 throws before starting the next row and disposes the binary importer without completing it, so
 PostgreSQL aborts the whole COPY rather than committing a prefix.
@@ -398,7 +399,7 @@ omits.
 ### Computed columns
 
 Properties configured with `HasComputedColumnSql` are omitted from COPY and the target insert so
-PostgreSQL can compute them. PgYeet 1.0 does not read computed values back.
+PostgreSQL can compute them. PgYeet 2.0 does not read computed values back.
 
 ### Shadow properties
 
@@ -416,7 +417,7 @@ Map required data to a CLR property or configure the database to supply it.
 
 ## Supported mappings and limitations
 
-| Mapping or behavior | 1.0 status | Notes |
+| Mapping or behavior | 2.0 status | Notes |
 | --- | --- | --- |
 | Single table per entity | Supported | Schema and identifiers come from the runtime EF model |
 | Scalar CLR properties | Supported | Subject to the matching Npgsql provider's type mapping |
@@ -440,7 +441,7 @@ Map required data to a CLR property or configure the database to supply it.
 | Composite generated key | Not supported | No key-correlation protocol |
 | Descending or cyclic identity | Rejected | Generated-key correlation requires increasing values |
 | Missing or incompatible identity/serial backing sequence | Rejected | Generated-key path checks the live PostgreSQL catalogs before COPY |
-| Non-primary-key identity/serial column | Rejected | 1.x reads back only one primary-key value |
+| Non-primary-key identity/serial column | Rejected | PgYeet reads back only one primary-key value |
 | Entity with only generated/computed columns | Rejected | At least one insertable CLR-backed column is required |
 | Database defaults on CLR-backed columns | Not applied | The CLR value is always written |
 | Generated computed-value read-back | Not supported | Only the supported identity key is returned |

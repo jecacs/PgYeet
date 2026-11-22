@@ -59,7 +59,7 @@ printf '%s\n' "${nuspec}" | grep -Fq '<license type="expression">MIT</license>'
 printf '%s\n' "${package_entries}" | grep -Fqx README.nuget.md
 printf '%s\n' "${package_entries}" | grep -Fqx icon.png
 
-for framework in net10.0; do
+for framework in net11.0; do
   printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.dll"
   printf '%s\n' "${package_entries}" | grep -Fqx "lib/${framework}/PgYeet.xml"
   printf '%s\n' "${symbol_entries}" | grep -Fqx "lib/${framework}/PgYeet.pdb"

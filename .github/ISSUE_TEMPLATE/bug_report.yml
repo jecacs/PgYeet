@@ -12,7 +12,7 @@ body:
     id: pgyeet-version
     attributes:
       label: PgYeet version
-      placeholder: 1.0.0
+      placeholder: 2.0.0
     validations:
       required: true
 
@@ -20,7 +20,7 @@ body:
     id: stack-versions
     attributes:
       label: EF Core, Npgsql, and PostgreSQL versions
-      placeholder: EF Core 10.0.x; Npgsql EF provider 10.0.x; PostgreSQL 18.x
+      placeholder: EF Core 11.0.x; Npgsql EF provider 11.0.x; PostgreSQL 18.x
     validations:
       required: true
 

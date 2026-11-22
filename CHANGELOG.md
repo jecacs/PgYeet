@@ -7,7 +7,20 @@ public API require a new major version.
 
 ## [Unreleased]
 
-## [1.0.0] - Unreleased
+## [2.0.0] - 2026-11-22
+
+### Changed
+
+- **Breaking:** target `net11.0` exclusively. Consumers must upgrade from .NET 10 to .NET 11.
+- **Breaking:** require EF Core Relational, Npgsql, and the Npgsql EF Core provider in the
+  `[11.0.0,12.0.0)` range.
+- Pin SDK 11.0.100 with roll-forward disabled and runtime 11.0.0. Align the test suite, benchmark
+  harness, package consumer, and automation with the .NET 11 provider line.
+- Adapt the benchmark harness to .NET 11 with BenchmarkDotNet `0.16.0-preview.2` and remove
+  EFCore.BulkExtensions `10.0.1` comparator cases that fail against EF Core 11.
+- Update installation, compatibility, development, and release guidance for the 2.0.0 package.
+
+## [1.0.0] - 2026-09-13
 
 ### Added
 
@@ -101,7 +114,8 @@ Initial release.
   tests, and the BenchmarkDotNet harness.
 - NuGet trusted publishing workflow.
 
-[Unreleased]: https://github.com/jecacs/PgYeet/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jecacs/PgYeet/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/jecacs/PgYeet/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/jecacs/PgYeet/compare/v0.2.1...v1.0.0
 [0.2.1]: https://github.com/jecacs/PgYeet/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jecacs/PgYeet/compare/v0.1.0...v0.2.0

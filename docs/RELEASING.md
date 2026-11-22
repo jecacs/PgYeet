@@ -7,8 +7,8 @@ This is the maintainer checklist for producing an immutable NuGet release. It co
 The canonical release path is a version tag consumed by the repository's trusted-publishing workflow.
 No long-lived NuGet API key belongs in the repository or a local script.
 
-The [PgYeet 1.0.0 release notes](../CHANGELOG.md) are still being prepared. Set their actual release
-date and change the README status when creating the release commit.
+The [PgYeet 2.0.0 release notes](../CHANGELOG.md) document the move to .NET 11 and EF Core/Npgsql 11.
+This framework and dependency change requires a new major version. The commands below use 2.0.0.
 
 ## Version policy
 
@@ -30,14 +30,14 @@ package contents.
 
 ## 1. Choose and synchronize the version
 
-For a release such as `1.0.0`, align:
+For a release such as `2.0.0`, align:
 
 - the library project `Version`;
 - package release notes;
 - `README.md` installation examples and status;
 - `README.nuget.md` installation examples;
 - the dated section in `CHANGELOG.md`;
-- the Git tag `v1.0.0`.
+- the Git tag `v2.0.0`.
 
 Keep an empty `[Unreleased]` section at the top of the changelog for subsequent work. The release date is
 the date the tag is created, not the date drafting began.
@@ -58,9 +58,10 @@ Verify the package matrix:
 
 | Target framework | EF Core | Npgsql EF Core provider |
 | --- | --- | --- |
-| `net10.0` | 10.x | 10.x |
+| `net11.0` | 11.x | 11.x |
 
-The package must contain only the `net10.0` asset and its EF Core/Npgsql 10 dependency group.
+The package must contain only the `net11.0` asset and its EF Core/Npgsql 11 dependency group, with
+each dependency bounded to `[11.0.0,12.0.0)`.
 Do not publish if an older framework or a different provider major appears in the package.
 
 Before a major release, inspect the compiled public API and decide every exposed symbol intentionally.
@@ -92,7 +93,7 @@ Do not release from an unreviewed local-only commit.
 
 ## 4. Restore, format, build, and test
 
-Confirm the SDK selected by `global.json`, the .NET 10 runtime, and Docker:
+Confirm the SDK selected by `global.json`, the .NET 11 runtime, and Docker:
 
 ```bash
 dotnet --version
@@ -100,8 +101,8 @@ dotnet --list-runtimes
 docker version
 ```
 
-`global.json` pins SDK 10.0.401 with roll-forward disabled, including runtime 10.0.12. The library,
-tests, benchmarks, and packed consumer all target `net10.0` with EF Core/Npgsql 10.
+`global.json` pins SDK 11.0.100 with roll-forward disabled. That SDK includes runtime 11.0.0. The library,
+tests, benchmarks, and packed consumer all target `net11.0` with EF Core/Npgsql 11.
 
 Run the exact quality gates used by CI:
 
@@ -112,7 +113,7 @@ dotnet format whitespace PgYeet.sln --no-restore --verify-no-changes
 dotnet test PgYeet.Tests/PgYeet.Tests.csproj --no-build --configuration Release --verbosity normal
 ```
 
-The test run must exercise the .NET 10 provider and start PostgreSQL successfully. A
+The test run must exercise the .NET 11 provider and start PostgreSQL successfully. A
 green compile without the Testcontainers integration suite is not a complete release gate.
 
 Investigate warnings; do not suppress a new warning merely to unblock publishing.
@@ -150,8 +151,8 @@ dotnet pack PgYeet/PgYeet.csproj \
 
 Expected outputs:
 
-- `PgYeet.1.0.0.nupkg`;
-- `PgYeet.1.0.0.snupkg`.
+- `PgYeet.2.0.0.nupkg`;
+- `PgYeet.2.0.0.snupkg`.
 
 Package validation must pass. Do not ignore an API, dependency, framework, or package-layout diagnostic
 without documenting why it is intentional.
@@ -161,13 +162,13 @@ without documenting why it is intentional.
 List both archives:
 
 ```bash
-unzip -l artifacts/PgYeet.1.0.0.nupkg
-unzip -l artifacts/PgYeet.1.0.0.snupkg
+unzip -l artifacts/PgYeet.2.0.0.nupkg
+unzip -l artifacts/PgYeet.2.0.0.snupkg
 ```
 
 The main package must contain:
 
-- `lib/net10.0/PgYeet.dll` and `PgYeet.xml`;
+- `lib/net11.0/PgYeet.dll` and `PgYeet.xml`;
 - `README.nuget.md` at the package root;
 - `icon.png`;
 - correct license expression;
@@ -175,13 +176,13 @@ The main package must contain:
 - dependencies aligned to the matching target-framework major;
 - version-specific release notes.
 
-The symbol package must contain a portable PDB with SourceLink information for `net10.0`.
+The symbol package must contain a portable PDB with SourceLink information for `net11.0`.
 
 Inspect generated metadata and the rendered README:
 
 ```bash
-unzip -p artifacts/PgYeet.1.0.0.nupkg PgYeet.nuspec
-unzip -p artifacts/PgYeet.1.0.0.nupkg README.nuget.md
+unzip -p artifacts/PgYeet.2.0.0.nupkg PgYeet.nuspec
+unzip -p artifacts/PgYeet.2.0.0.nupkg README.nuget.md
 ```
 
 Confirm that the package exposes only the intended public API. In particular, internal COPY and mapping
@@ -200,10 +201,10 @@ for each supported target and verify that:
 
 Run the shared CI/pre-push smoke script; it restores into a fresh cache, checks the exact nupkg
 bytes, starts its own PostgreSQL container, and verifies inserts, generated keys, nullable values,
-and transaction rollback on .NET 10:
+and transaction rollback on .NET 11:
 
 ```bash
-bash scripts/test-package.sh artifacts/PgYeet.1.0.0.nupkg
+bash scripts/test-package.sh artifacts/PgYeet.2.0.0.nupkg
 ```
 
 The script uses `packages.packed.lock.template.json` for the consumer's complete remote dependency
@@ -219,9 +220,9 @@ are needed.
 After the release commit is reviewed, merged, and all gates pass:
 
 ```bash
-git tag -a v1.0.0 -m "PgYeet 1.0.0"
-git show v1.0.0 --stat
-git push origin v1.0.0
+git tag -a v2.0.0 -m "PgYeet 2.0.0"
+git show v2.0.0 --stat
+git push origin v2.0.0
 ```
 
 The tag version, project version, changelog, package metadata, and generated filenames must agree
@@ -236,7 +237,7 @@ Watch the complete release workflow:
 1. validate that the tag exactly matches the project version and its commit is contained in `main`;
 2. perform locked restore with NuGet audit, warning-free build, formatting check, and PostgreSQL tests;
 3. pack and validate one main package and one symbol package, then record both SHA-256 digests;
-4. restore the exact packed package and run its smoke application on .NET 10;
+4. restore the exact packed package and run its smoke application on .NET 11;
 5. create and independently verify a GitHub build-provenance attestation covering the package and symbols;
 6. stage the artifacts in a durable draft GitHub Release and download/verify them again; on rerun,
    recover the already-staged bytes instead of adopting a newly packed candidate;
@@ -269,10 +270,10 @@ After NuGet indexing completes, verify:
 - [the package page](https://www.nuget.org/packages/PgYeet) shows the intended version;
 - the dedicated NuGet README renders correctly;
 - title, description, icon, license, repository, tags, and release notes are correct;
-- the .NET 10 dependency group is correct;
+- the .NET 11 dependency group is correct;
 - the symbol package was accepted;
 - source navigation resolves to the tagged commit;
-- `dotnet add package PgYeet --version 1.0.0` restores from nuget.org;
+- `dotnet add package PgYeet --version 2.0.0` restores from nuget.org;
 - the GitHub tag points to the reviewed release commit;
 - the automatically created GitHub Release contains the package, symbols, both checksum files, and
   Sigstore bundle;
